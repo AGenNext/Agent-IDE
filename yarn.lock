@@ -1,0 +1,2 @@
+# This lockfile is intentionally minimal until dependencies are installed by CI/local development.
+# Run `corepack enable && yarn install` to generate the full lockfile.
