@@ -1,0 +1,13 @@
+{
+  "name": "@agennext/agent-ide-core",
+  "version": "0.1.0",
+  "private": true,
+  "main": "lib/browser/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@theia/core": "latest",
+    "inversify": "^6.0.1"
+  }
+}
