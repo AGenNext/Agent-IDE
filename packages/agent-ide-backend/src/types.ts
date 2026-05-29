@@ -49,12 +49,12 @@ export interface TraceStepRecord {
 
 // ─── WebSocket messages ───────────────────────────────────────────────────────
 
-export type WsMessageType = 'run:started' | 'run:step' | 'run:completed' | 'run:failed' | 'run:cancelled';
+export type WsMessageType = 'run:started' | 'run:step' | 'run:completed' | 'run:failed' | 'run:cancelled' | 'governance:approval-request' | 'governance:approval-resolved';
 
 export interface WsMessage {
     type: WsMessageType;
     runId: string;
-    payload: TraceStepRecord | RunRecord | { error: string };
+    payload: unknown;
 }
 
 // ─── Tool invocation ─────────────────────────────────────────────────────────

@@ -80,7 +80,9 @@ const TOOL_HANDLERS: Record<string, (input: Record<string, unknown>) => Promise<
         if (body && method !== 'GET' && method !== 'HEAD') init.body = body;
         const res = await fetch(url, init);
         const text = await res.text();
-        return { status: res.status, headers: Object.fromEntries(res.headers.entries()), body: text.slice(0, 4096) };
+        const hdrs: Record<string, string> = {};
+        (res.headers as unknown as { forEach: (cb: (v: string, k: string) => void) => void }).forEach((v, k) => { hdrs[k] = v; });
+        return { status: res.status, headers: hdrs, body: text.slice(0, 4096) };
     },
 
     // ── Vector Search (in-memory cosine sim) ─────────────────────────────────
