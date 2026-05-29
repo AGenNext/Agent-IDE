@@ -156,21 +156,10 @@ jobs:
       - name: Set up kubectl
         uses: azure/setup-kubectl@v3
 
-      - name: Fetch secrets from Infisical
-        uses: Infisical/secrets-action@v1.0.7
-        with:
-          method: "universal-auth"
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          project-id: ${{ vars.INFISICAL_PROJECT_ID }}
-          env-slug: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
-          secret-path: "/"
-          export-type: env
-
       - name: Write kubeconfig
         run: |
           mkdir -p $HOME/.kube
-          echo "$KUBECONFIG" | base64 -d > $HOME/.kube/config
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
 
       - name: Set image tag
