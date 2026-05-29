@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-ide-backend
+  namespace: agent-ide
+  labels:
+    app.kubernetes.io/name: agent-ide
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: agent-ide
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+      protocol: TCP
+    - name: websocket
+      port: 3002
+      targetPort: http
+      protocol: TCP

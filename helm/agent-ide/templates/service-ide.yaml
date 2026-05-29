@@ -1,0 +1,20 @@
+{{- if .Values.ide.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-ide.fullname" . }}-ide
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-ide.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ide
+spec:
+  type: {{ .Values.ide.service.type }}
+  selector:
+    {{- include "agent-ide.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ide
+  ports:
+    - name: http
+      port: {{ .Values.ide.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

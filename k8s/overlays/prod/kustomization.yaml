@@ -1,0 +1,57 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Production overlay: 2 replicas, tighter resource limits.
+namePrefix: prod-
+
+resources:
+  - ../../base
+
+patches:
+  # Scale backend to 2 replicas
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: agent-ide-backend
+
+  # Scale IDE to 2 replicas
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: agent-ide-ide
+
+  # Backend resource limits for production
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: "2"
+            memory: 1Gi
+    target:
+      kind: Deployment
+      name: agent-ide-backend
+
+  # IDE resource limits for production
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+    target:
+      kind: Deployment
+      name: agent-ide-ide

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-ide-config
+  namespace: agent-ide
+  labels:
+    app.kubernetes.io/name: agent-ide
+    app.kubernetes.io/managed-by: kustomize
+data:
+  PORT: "3001"
+  NODE_ENV: "production"
+  ALLOW_SHELL: "false"
+  AUTH_ENABLED: "false"
+  WORKSPACE_ROOT: "/data"
