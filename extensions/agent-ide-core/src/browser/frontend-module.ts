@@ -17,6 +17,7 @@ import { PlatformPanelWidget, PlatformPanelContribution } from './panels/platfor
 import { ResearchPanelWidget, ResearchPanelContribution } from './panels/research-panel-widget';
 import { BenchPanelWidget, BenchPanelContribution } from './panels/bench-panel-widget';
 import { OptimizePanelWidget, OptimizePanelContribution } from './panels/optimize-panel-widget';
+import { McpPanelWidget, McpPanelContribution } from './panels/mcp-panel-widget';
 
 function bindPanel<W, C>(bind: Function, Widget: any, Contribution: any): void {
     bindViewContribution(bind, Contribution);
@@ -44,6 +45,7 @@ export default new ContainerModule(bind => {
     bindPanel(bind, TasksPanelWidget,     TasksPanelContribution);
     bindPanel(bind, KnowledgePanelWidget, KnowledgePanelContribution);
     bindPanel(bind, ArtifactsPanelWidget, ArtifactsPanelContribution);
+    bindPanel(bind, McpPanelWidget,       McpPanelContribution);
 
     // Bottom panels
     bindPanel(bind, RunsPanelWidget,   RunsPanelContribution);

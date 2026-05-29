@@ -56,3 +56,4 @@ Always build in dependency order:
 | `agent-ide:platform`     | main    | `agentIde.openPlatform`    |
 | `agent-ide:research`     | main    | `agentIde.openResearch`    |
 | `agent-ide:bench`        | main    | `agentIde.openBench`       |
+| `agent-ide:mcp`          | left    | `agentIde.openMcp`         |
