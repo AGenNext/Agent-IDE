@@ -1,84 +1,77 @@
-# Agent IDE
+# Agent IDE — Agent Workspace OS
 
-Agent IDE is an AGenNext developer workspace built by extending Eclipse Theia. It is designed for agent-first software work: coding, prompt and tool development, task handoff, trace review, governed execution, and enterprise collaboration.
+> An enterprise-grade IDE shell for deploying, orchestrating, monitoring, and governing
+> multi-agent AI workflows. Built on Eclipse Theia.
 
-This repository starts with a production-oriented Theia application shell and an Agent IDE extension surface that can grow into a full agent workspace.
+---
 
-## Why Theia
+## What is Agent IDE?
 
-Eclipse Theia gives Agent IDE a VS Code-like workbench, Monaco editor, language server support, terminal integration, extension compatibility patterns, and a browser/desktop-friendly architecture. Agent IDE extends that foundation instead of reinventing the IDE shell.
+Agent IDE is not a coding assistant. It is an **Agent Workspace OS** — a platform
+where human operators define goals and AI agents decompose, execute, and deliver them.
 
-## Product goals
+Every agent action is governed, every run is traceable, every artifact is versioned.
 
-- Agent-aware workspace for code, tasks, files, prompts, tools, skills, logs, and human review.
-- Theia workbench as the stable IDE substrate.
-- Agent panels for context, runs, traces, handoffs, memory, skills, and governance.
-- Workspace-first collaboration with Git, terminal, editor, preview, and project graph support.
-- Governance-native execution: policies, approvals, audit logs, replay, retry, and provenance.
-- Deployable as a browser IDE with Docker and Kubernetes-friendly runtime assumptions.
+---
 
-## Repository layout
+## Panels
 
-```text
-.
-├── applications/browser-app/      # Theia browser application package
-├── extensions/agent-ide-core/     # Agent IDE frontend extension and contribution points
-├── docs/                          # Architecture and implementation notes
-├── .github/workflows/             # CI checks
-├── Dockerfile                     # Container image for browser IDE
-├── package.json                   # Yarn workspace root
-└── theia-apps.json                # Theia app metadata
-```
+| Panel | Description |
+|-------|-------------|
+| **Dashboard** | Workspace overview — agent count, task status, run history, governance status |
+| **Agents** | Browse and manage registered AI agents |
+| **Tasks** | Create, assign, and track tasks |
+| **Knowledge** | Workspace-level knowledge base for agent retrieval |
+| **Artifacts** | Files, code, and data produced by agents |
+| **Runs** | Live and historical execution log |
+| **Replay** | Step-through trace debugger for any past run |
+| **Governance** | Policy editor: allow / deny / require-approval / audit |
+| **Builder** | Visual agent workflow designer (graph canvas) |
 
-## First implementation scope
+---
 
-The first bootstrap provides:
-
-- A Theia browser application package.
-- A custom `agent-ide-core` extension package.
-- Agent dashboard command and widget contribution.
-- Agent IDE menu/command registration.
-- Workspace scripts for build, start, lint, and test.
-- Docker image for deployable browser IDE.
-- CI workflow for dependency install and build validation.
-- Product architecture notes for future agent runtime integrations.
-
-## Local development
+## Quick Start
 
 ```bash
-corepack enable
+# Prerequisites: Node.js 22, corepack enable
 yarn install
 yarn build
 yarn start
+# Open http://localhost:3000
 ```
 
-The browser app defaults to port `3000`.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for Docker and CI setup.
 
-## Docker
+---
 
-```bash
-docker build -t agennext/agent-ide:local .
-docker run --rm -p 3000:3000 agennext/agent-ide:local
+## Architecture
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full monorepo layout
+and design decisions.
+
+See [docs/AGENT_WORKSPACE_OS.md](docs/AGENT_WORKSPACE_OS.md) for the product vision
+and runtime roadmap.
+
+---
+
+## Monorepo Layout
+
+```
+agent-ide/
+├── applications/browser-app/     # Theia browser application
+├── extensions/agent-ide-core/    # Core IDE extension (panels, commands)
+├── packages/agent-ide-types/     # Shared domain types
+└── docs/                          # Architecture docs
 ```
 
-## Extension model
+---
 
-The custom extension starts small on purpose. It should become the stable integration layer for:
+## Contributing
 
-- Agent registry and skill registry views.
-- Tool and MCP connection management.
-- Agent run console.
-- Trace, replay, retry, and handoff inspection.
-- Governance policies and approval gates.
-- Prompt, workflow, and blueprint authoring.
-- Workspace graph and artifact provenance.
+See [AGENTS.md](AGENTS.md) for coding conventions and architecture constraints.
 
-## Roadmap
+---
 
-1. Add backend agent runtime bridge for LangGraph/AgentRunner.
-2. Add authenticated workspace API and per-user workspace provisioning.
-3. Add trace viewer and handoff review UI.
-4. Add tool registry/MCP gateway panel.
-5. Add policy checks with OPA/OpenFGA-ready abstractions.
-6. Add collaborative artifact views and project graph visualization.
-7. Add desktop packaging if needed after browser IDE stabilizes.
+## License
+
+MIT
