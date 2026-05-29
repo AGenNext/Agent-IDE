@@ -1,5 +1,51 @@
 # Deployment Guide
 
+## Backend server
+
+The agent backend runs separately from Theia on **port 3001**.
+
+### Start backend
+
+```bash
+# With live LLM (set at least one API key):
+OPENAI_API_KEY=sk-…   yarn start:backend
+ANTHROPIC_API_KEY=sk-… yarn start:backend
+
+# Offline/demo mode (no API key needed — synthetic traces):
+yarn start:backend
+
+# With shell and filesystem tools enabled:
+ALLOW_SHELL=true WORKSPACE_ROOT=/path/to/workspace yarn start:backend
+```
+
+### Environment variables
+
+| Variable | Description |
+|---|---|
+| `PORT` | Backend port (default `3001`) |
+| `OPENAI_API_KEY` | OpenAI API key for GPT-4o / GPT-4o-mini |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude models |
+| `BRAVE_API_KEY` | Brave Search API key for `web_search` tool |
+| `DATABASE_URL` | PostgreSQL URL for `db_query` tool |
+| `ALLOW_SHELL` | Set `true` to enable `shell` and `code_exec` tools |
+| `WORKSPACE_ROOT` | Root directory for `file_rw` tool (default: `cwd`) |
+
+### API reference
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Server health and uptime |
+| `GET` | `/api/config` | Server config (which keys are set) |
+| `POST` | `/api/runs` | Submit a new agent run |
+| `GET` | `/api/runs` | List recent runs |
+| `GET` | `/api/runs/:id` | Get run with full trace |
+| `DELETE` | `/api/runs/:id` | Cancel a running run |
+| `GET` | `/api/tools` | List available tools |
+| `POST` | `/api/tools/:id/invoke` | Invoke a tool directly |
+| `WS` | `/ws/:runId` | Stream trace steps for a run |
+
+---
+
 ## Local development
 
 ### Prerequisites

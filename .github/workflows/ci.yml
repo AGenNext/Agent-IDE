@@ -25,13 +25,20 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build packages
-        run: |
-          yarn --cwd packages/agent-ide-types build
-          yarn --cwd extensions/agent-ide-core build
+      - name: Build agent-ide-types
+        run: yarn --cwd packages/agent-ide-types build
+
+      - name: Build agent-ide-backend
+        run: yarn --cwd packages/agent-ide-backend build
+
+      - name: Build agent-ide-core extension
+        run: yarn --cwd extensions/agent-ide-core build
 
       - name: Typecheck extension
         run: yarn --cwd extensions/agent-ide-core typecheck
+
+      - name: Typecheck backend
+        run: yarn --cwd packages/agent-ide-backend typecheck
 
       - name: Lint extension
         run: yarn --cwd extensions/agent-ide-core lint

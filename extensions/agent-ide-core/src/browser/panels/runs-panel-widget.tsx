@@ -4,6 +4,7 @@ import { ReactWidget, AbstractViewContribution } from '@theia/core/lib/browser';
 import { CommandRegistry } from '@theia/core/lib/common';
 import { AgentRun, TaskStatus, TraceStepType, TokenRecord, TokenFlowRecord } from '@agennext/agent-ide-types';
 import { RunsPanelCommand } from '../agent-ide-commands';
+import { isBackendReachable, submitRun, streamRun, listRuns, RunSummary } from '../runtime/backend-client';
 
 type RunTab = 'trace' | 'tokenflow' | 'performance';
 
@@ -370,11 +371,121 @@ function PerformanceViewer({ runId }: { runId: string }) {
 
 // ─── Main view ────────────────────────────────────────────────────────────────
 
+// ─── Live Run form ────────────────────────────────────────────────────────────
+
+const LIVE_MODELS = ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-haiku-4-5', 'gpt-4o', 'gpt-4o-mini'];
+const ALL_TOOL_IDS = ['browser', 'web_search', 'http_client', 'file_rw', 'vector_search', 'code_exec', 'db_query', 'shell'];
+
+function LiveRunModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (req: Parameters<typeof submitRun>[0]) => void }) {
+    const [task, setTask] = React.useState('');
+    const [model, setModel] = React.useState('claude-sonnet-4-6');
+    const [apiKey, setApiKey] = React.useState('');
+    const [tools, setTools] = React.useState<string[]>(['vector_search', 'http_client']);
+    const [systemPrompt, setSystemPrompt] = React.useState('You are a helpful assistant. Break tasks into clear steps, use tools when needed, and produce concise outputs.');
+
+    function toggleTool(id: string) {
+        setTools(ts => ts.includes(id) ? ts.filter(t => t !== id) : [...ts, id]);
+    }
+
+    function submit() {
+        if (!task.trim()) return;
+        onSubmit({ agentId: uid(), agentName: 'LiveAgent', model, systemPrompt, task, tools, apiKey: apiKey || undefined });
+        onClose();
+    }
+
+    return (
+        <div style={{ position: 'fixed', inset: 0, background: '#000b', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={onClose}>
+            <div style={{ background: '#111', border: '1px solid #333', borderRadius: 8, padding: 20, width: 500, maxHeight: '80vh', overflow: 'auto' }}
+                onClick={e => e.stopPropagation()}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#e0e0e0' }}>New Live Run</span>
+                    <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 16 }}>×</button>
+                </div>
+
+                <Label>Task</Label>
+                <textarea value={task} onChange={e => setTask(e.target.value)} placeholder="What should the agent do?"
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', height: 72, resize: 'vertical', marginBottom: 10 }} />
+
+                <Label>Model</Label>
+                <select value={model} onChange={e => setModel(e.target.value)} style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', marginBottom: 10 }}>
+                    {LIVE_MODELS.map(m => <option key={m}>{m}</option>)}
+                </select>
+
+                <Label>API Key <span style={{ color: '#555', fontWeight: 400 }}>(optional — uses server env if blank)</span></Label>
+                <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-… or leave blank"
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', marginBottom: 10 }} />
+
+                <Label>System Prompt</Label>
+                <textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)}
+                    style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', height: 60, resize: 'vertical', marginBottom: 10 }} />
+
+                <Label>Tools</Label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                    {ALL_TOOL_IDS.map(id => (
+                        <button key={id} onClick={() => toggleTool(id)}
+                            style={{ padding: '3px 10px', borderRadius: 12, fontSize: 11, cursor: 'pointer', border: '1px solid', fontFamily: 'monospace',
+                                background: tools.includes(id) ? '#1a3a1a' : '#111',
+                                color:      tools.includes(id) ? '#60d060' : '#555',
+                                borderColor: tools.includes(id) ? '#3a7a3a' : '#2a2a2a' }}>
+                            {id}
+                        </button>
+                    ))}
+                </div>
+
+                <button onClick={submit} disabled={!task.trim()}
+                    style={{ width: '100%', padding: '8px 0', background: task.trim() ? '#1a3a1a' : '#111', border: `1px solid ${task.trim() ? '#3a7a3a' : '#222'}`, color: task.trim() ? '#60d060' : '#444', borderRadius: 4, cursor: task.trim() ? 'pointer' : 'default', fontSize: 13, fontWeight: 700 }}>
+                    ▶ Submit Run
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function Label({ children }: { children: React.ReactNode }) {
+    return <div style={{ fontSize: 10, color: '#555', fontWeight: 700, marginBottom: 4 }}>{children}</div>;
+}
+
+const inputStyle: React.CSSProperties = {
+    background: '#1a1a1a', border: '1px solid #333', color: '#ddd',
+    borderRadius: 4, padding: '6px 8px', fontSize: 12, outline: 'none',
+};
+
+// ─── Main RunsView ────────────────────────────────────────────────────────────
+
 function RunsView() {
     const [runs, setRuns] = React.useState<AgentRun[]>(INITIAL_RUNS);
     const [selected, setSelected] = React.useState<string | null>(INITIAL_RUNS[0].id);
     const [tab, setTab] = React.useState<RunTab>('trace');
     const [simulating, setSimulating] = React.useState(false);
+    const [backendOnline, setBackendOnline] = React.useState<boolean | null>(null);
+    const [showLiveModal, setShowLiveModal] = React.useState(false);
+    const [liveRunning, setLiveRunning] = React.useState(false);
+    const wsRef = React.useRef<WebSocket | null>(null);
+
+    // Check backend on mount
+    React.useEffect(() => {
+        isBackendReachable().then(ok => {
+            setBackendOnline(ok);
+            if (ok) loadBackendRuns();
+        });
+    }, []);
+
+    async function loadBackendRuns() {
+        try {
+            const summaries: RunSummary[] = await listRuns();
+            if (summaries.length > 0) {
+                const converted: AgentRun[] = summaries.map(s => ({
+                    id: s.runId, agentId: s.agentId, taskId: uid(),
+                    status: s.status as TaskStatus,
+                    startedAt: s.startedAt, completedAt: s.completedAt,
+                    trace: [], artifactIds: [], metadata: { live: true, stepCount: s.stepCount },
+                }));
+                setRuns(prev => [...converted, ...prev]);
+                if (converted[0]) setSelected(converted[0].id);
+            }
+        } catch { /* backend unavailable */ }
+    }
 
     const simulate = () => {
         setSimulating(true);
@@ -387,6 +498,40 @@ function RunsView() {
         }, 500);
     };
 
+    async function handleLiveSubmit(req: Parameters<typeof submitRun>[0]) {
+        setLiveRunning(true);
+        try {
+            const { runId } = await submitRun(req);
+            const liveRun: AgentRun = {
+                id: runId, agentId: req.agentId, taskId: uid(),
+                status: 'in_progress' as TaskStatus,
+                startedAt: new Date().toISOString(),
+                trace: [], artifactIds: [],
+                metadata: { live: true, task: req.task, model: req.model },
+            };
+            setRuns(rs => [liveRun, ...rs]);
+            setSelected(runId);
+            setTab('trace');
+
+            wsRef.current?.close();
+            wsRef.current = streamRun(
+                runId,
+                (_step) => {
+                    setRuns(rs => rs.map(r => r.id === runId ? { ...r, status: 'in_progress' as TaskStatus } : r));
+                },
+                (_run, error) => {
+                    setRuns(rs => rs.map(r =>
+                        r.id === runId ? { ...r, status: (error ? 'failed' : 'completed') as TaskStatus } : r
+                    ));
+                    setLiveRunning(false);
+                },
+            );
+        } catch (err) {
+            console.error('Live run failed:', err);
+            setLiveRunning(false);
+        }
+    }
+
     const TABS: { id: RunTab; label: string }[] = [
         { id: 'trace',       label: 'Trace' },
         { id: 'tokenflow',   label: 'Token Flow' },
@@ -395,11 +540,26 @@ function RunsView() {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#111', color: '#ccc', fontFamily: 'var(--theia-ui-font-family, sans-serif)' }}>
-            <div style={{ padding: '8px 12px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', gap: 10 }}>
+            {showLiveModal && <LiveRunModal onClose={() => setShowLiveModal(false)} onSubmit={handleLiveSubmit} />}
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontWeight: 700, fontSize: 13 }}>Agent Runs</span>
-                <button onClick={simulate} disabled={simulating} style={{ marginLeft: 'auto', padding: '4px 12px', background: simulating ? '#1a1a1a' : '#1e2e1e', border: '1px solid #3a5a3a', color: simulating ? '#444' : '#60d060', borderRadius: 4, cursor: simulating ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 600 }}>
-                    {simulating ? 'Simulating…' : '▶ Simulate Run'}
-                </button>
+                {backendOnline !== null && (
+                    <span style={{ fontSize: 10, color: backendOnline ? '#40a040' : '#555', fontFamily: 'monospace' }}>
+                        {backendOnline ? '● live backend' : '○ offline'}
+                    </span>
+                )}
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                    {backendOnline && (
+                        <button onClick={() => setShowLiveModal(true)} disabled={liveRunning}
+                            style={{ padding: '4px 12px', background: liveRunning ? '#111' : '#1a2a3a', border: '1px solid #2a4a7a', color: liveRunning ? '#444' : '#7ab4ff', borderRadius: 4, cursor: liveRunning ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 600 }}>
+                            {liveRunning ? '◌ Running…' : '⚡ Live Run'}
+                        </button>
+                    )}
+                    <button onClick={simulate} disabled={simulating}
+                        style={{ padding: '4px 12px', background: simulating ? '#1a1a1a' : '#1e2e1e', border: '1px solid #3a5a3a', color: simulating ? '#444' : '#60d060', borderRadius: 4, cursor: simulating ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 600 }}>
+                        {simulating ? 'Simulating…' : '▶ Simulate'}
+                    </button>
+                </div>
             </div>
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
                 <RunList runs={runs} selected={selected} onSelect={id => { setSelected(id); setTab('trace'); }} />

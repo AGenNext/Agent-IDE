@@ -10,7 +10,8 @@
   "scripts": {
     "build": "yarn workspaces run build",
     "start": "yarn --cwd applications/browser-app start",
-    "start:watch": "concurrently \"yarn --cwd packages/agent-ide-types watch\" \"yarn --cwd extensions/agent-ide-core watch\" \"yarn --cwd applications/browser-app start\"",
+    "start:backend": "yarn --cwd packages/agent-ide-backend start",
+    "start:dev": "concurrently \"yarn --cwd packages/agent-ide-types watch\" \"yarn --cwd extensions/agent-ide-core watch\" \"yarn --cwd packages/agent-ide-backend dev\" \"yarn --cwd applications/browser-app start\"",
     "lint": "yarn workspaces run lint",
     "typecheck": "yarn workspaces run typecheck"
   },

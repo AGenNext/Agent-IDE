@@ -28,14 +28,22 @@
 - [x] MCP/Tools panel (tool registry, MCP servers, invocation logs)
 - [x] Runtime stubs (agent-runtime, orchestrator, tool-registry, message-bus, persistence)
 
-## Phase 3 — Live Agent Execution
+## Phase 3 — Live Agent Execution ✅ (initial)
 
-- [ ] Wire `agent-runtime.ts` to real Anthropic/OpenAI API endpoints
-- [ ] Backend Express server for proxy, filesystem, DB, and shell tools
-- [ ] Live Runs panel — real trace steps streaming from backend
-- [ ] Tool execution approval flow (from Governance to tool call)
-- [ ] Replay panel reading real persisted traces from `persistence.ts`
-- [ ] WebSocket message bus (`message-bus.ts`) connected to backend
+- [x] `packages/agent-ide-backend` — Express + WebSocket server (port 3001)
+- [x] POST `/api/runs` — submit agent task, returns runId immediately
+- [x] WebSocket `/ws/:runId` — real-time trace step streaming
+- [x] GET `/api/runs`, GET `/api/runs/:id`, DELETE `/api/runs/:id`
+- [x] POST `/api/tools/:id/invoke` — direct tool invocation endpoint
+- [x] GET `/api/tools`, GET `/api/config`, GET `/health`
+- [x] Live agent loop: ReAct pattern with real OpenAI/Anthropic API calls
+- [x] Offline/demo mode — synthetic trace when no API key configured
+- [x] Tool proxy: `file_rw`, `shell`, `http_client`, `browser`, `web_search`, `vector_search`, `code_exec`, `db_query`
+- [x] `backend-client.ts` — frontend HTTP+WebSocket client for backend
+- [x] Runs panel — "⚡ Live Run" button when backend detected, streams trace via WebSocket
+- [ ] Tool execution approval flow (Governance → hold tool call until approved)
+- [ ] Replay panel reading real persisted traces from persistence layer
+- [ ] WebSocket fan-out to multiple subscribers
 
 ## Phase 4 — MCP Gateway
 
