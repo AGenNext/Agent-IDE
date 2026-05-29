@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "agent-ide.fullname" . }}-data
+  name: {{ include "agent-ide.fullname" . }}-backend-data
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "agent-ide.labels" . | nindent 4 }}

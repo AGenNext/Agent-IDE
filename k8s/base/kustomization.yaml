@@ -5,6 +5,7 @@ namespace: agent-ide
 
 resources:
   - namespace.yaml
+  - serviceaccount.yaml
   - configmap.yaml
   - secret.yaml
   - pvc.yaml
