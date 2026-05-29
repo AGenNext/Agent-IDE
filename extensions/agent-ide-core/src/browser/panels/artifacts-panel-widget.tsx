@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { injectable, postConstruct } from '@theia/core/shared/inversify';
-import { ReactWidget } from '@theia/core/lib/browser';
+import { ReactWidget, AbstractViewContribution } from '@theia/core/lib/browser';
+import { CommandRegistry } from '@theia/core/lib/common';
 import { ArtifactType } from '@agennext/agent-ide-types';
+import { ArtifactsPanelCommand } from '../agent-ide-commands';
 
 interface DemoArtifact {
     id: string;
@@ -220,5 +222,15 @@ export class ArtifactsPanelWidget extends ReactWidget {
 
     protected render(): React.ReactNode {
         return <ArtifactsView />;
+    }
+}
+
+@injectable()
+export class ArtifactsPanelContribution extends AbstractViewContribution<ArtifactsPanelWidget> {
+    constructor() {
+        super({ widgetId: ArtifactsPanelWidget.ID, widgetName: ArtifactsPanelWidget.LABEL, defaultWidgetOptions: { area: 'left' }, toggleCommandId: ArtifactsPanelCommand.id });
+    }
+    registerCommands(commands: CommandRegistry): void {
+        commands.registerCommand(ArtifactsPanelCommand, { execute: () => this.openView({ activate: true }) });
     }
 }

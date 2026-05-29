@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**", "claude/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "yarn"
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build packages
+        run: |
+          yarn --cwd packages/agent-ide-types build
+          yarn --cwd extensions/agent-ide-core build
+
+      - name: Typecheck extension
+        run: yarn --cwd extensions/agent-ide-core typecheck
+
+      - name: Lint extension
+        run: yarn --cwd extensions/agent-ide-core lint
+        continue-on-error: true

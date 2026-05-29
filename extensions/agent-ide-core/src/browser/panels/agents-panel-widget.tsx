@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { injectable, postConstruct } from '@theia/core/shared/inversify';
-import { ReactWidget } from '@theia/core/lib/browser';
+import { ReactWidget, AbstractViewContribution } from '@theia/core/lib/browser';
+import { CommandRegistry } from '@theia/core/lib/common';
+import { AgentsPanelCommand } from '../agent-ide-commands';
 
 type LLMModel = 'claude-opus-4-8' | 'claude-sonnet-4-6' | 'claude-haiku-4-5' | 'gpt-4o' | 'gpt-4o-mini' | 'gemini-1.5-pro';
 type FormSection = 'overview' | 'model' | 'prompt' | 'tools' | 'skills' | 'agents';
@@ -474,5 +476,15 @@ export class AgentsPanelWidget extends ReactWidget {
 
     protected render(): React.ReactNode {
         return <AgentModelingView />;
+    }
+}
+
+@injectable()
+export class AgentsPanelContribution extends AbstractViewContribution<AgentsPanelWidget> {
+    constructor() {
+        super({ widgetId: AgentsPanelWidget.ID, widgetName: AgentsPanelWidget.LABEL, defaultWidgetOptions: { area: 'left' }, toggleCommandId: AgentsPanelCommand.id });
+    }
+    registerCommands(commands: CommandRegistry): void {
+        commands.registerCommand(AgentsPanelCommand, { execute: () => this.openView({ activate: true }) });
     }
 }

@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { injectable, postConstruct } from '@theia/core/shared/inversify';
-import { ReactWidget } from '@theia/core/lib/browser';
+import { ReactWidget, AbstractViewContribution } from '@theia/core/lib/browser';
+import { CommandRegistry } from '@theia/core/lib/common';
 import { AgentRun, TaskStatus, TraceStepType, TokenRecord, TokenFlowRecord } from '@agennext/agent-ide-types';
+import { RunsPanelCommand } from '../agent-ide-commands';
 
 type RunTab = 'trace' | 'tokenflow' | 'performance';
 
@@ -445,5 +447,15 @@ export class RunsPanelWidget extends ReactWidget {
 
     protected render(): React.ReactNode {
         return <RunsView />;
+    }
+}
+
+@injectable()
+export class RunsPanelContribution extends AbstractViewContribution<RunsPanelWidget> {
+    constructor() {
+        super({ widgetId: RunsPanelWidget.ID, widgetName: RunsPanelWidget.LABEL, defaultWidgetOptions: { area: 'bottom' }, toggleCommandId: RunsPanelCommand.id });
+    }
+    registerCommands(commands: CommandRegistry): void {
+        commands.registerCommand(RunsPanelCommand, { execute: () => this.openView({ activate: true }) });
     }
 }

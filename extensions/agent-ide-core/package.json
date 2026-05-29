@@ -1,0 +1,32 @@
+{
+  "name": "@agennext/agent-ide-core",
+  "version": "0.1.0",
+  "description": "Agent IDE core Theia extension — panels, commands, runtime, and workspace OS",
+  "keywords": ["theia-extension"],
+  "license": "MIT",
+  "files": ["lib", "src"],
+  "main": "lib/browser/frontend-module",
+  "typings": "lib/browser/frontend-module.d.ts",
+  "scripts": {
+    "prepare": "yarn build",
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint --ext .ts,.tsx src"
+  },
+  "dependencies": {
+    "@agennext/agent-ide-types": "^0.1.0",
+    "@theia/core": "^1.44.0"
+  },
+  "peerDependencies": {
+    "@theia/core": "^1.44.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/frontend-module"
+    }
+  ]
+}
