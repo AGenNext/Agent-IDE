@@ -60,7 +60,7 @@ function RadarChart({ scores }: { scores: AgentBenchScores }) {
     const gridPoly = (scale: number) =>
         Array.from({ length: n }, (_, i) => { const a = angle(i); return `${cx+Math.cos(a)*r*scale},${cy+Math.sin(a)*r*scale}`; }).join(' ');
     const dataPts = envs.map((e, i) => {
-        const v = (scores as Record<string, number>)[e.id] ?? 0;
+        const v = (scores as unknown as Record<string, number>)[e.id] ?? 0;
         const a = angle(i);
         return `${cx+Math.cos(a)*r*Math.min(1,v)},${cy+Math.sin(a)*r*Math.min(1,v)}`;
     }).join(' ');
@@ -164,7 +164,7 @@ function BenchView() {
                                         <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                                             <RadarChart scores={scores} />
                                             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5, minWidth: 180 }}>
-                                                {ENVIRONMENTS.map(e => <EnvBar key={e.id} env={e} score={(scores as Record<string,number>)[e.id]} running={false} />)}
+                                                {ENVIRONMENTS.map(e => <EnvBar key={e.id} env={e} score={(scores as unknown as Record<string,number>)[e.id]} running={false} />)}
                                                 <div style={{ marginTop: 8, padding: '6px 8px', background: '#1a2a1a', borderRadius: 4, fontSize: 12 }}>
                                                     Overall: <b style={{ color: '#60d0a0', fontSize: 15 }}>{(scores.overall*100).toFixed(1)}%</b>
                                                 </div>
@@ -192,7 +192,7 @@ function BenchView() {
                                         <tr key={e.id} style={{ borderBottom: '1px solid #1a1a1a' }}>
                                             <td style={{ padding: '4px 8px', color: e.color, fontWeight: 700 }}>{e.label}</td>
                                             {compare.map(id => {
-                                                const v = (results[id] as Record<string,number> | undefined)?.[e.id];
+                                                const v = (results[id] as unknown as Record<string,number> | undefined)?.[e.id];
                                                 return <td key={id} style={{ textAlign: 'right', padding: '4px 8px', color: '#c0d0e0', fontFamily: 'monospace' }}>{v !== undefined ? `${(v*100).toFixed(1)}%` : '—'}</td>;
                                             })}
                                         </tr>

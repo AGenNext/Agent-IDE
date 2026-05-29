@@ -46,19 +46,19 @@ const REGISTRY: ToolDefinition[] = [
     {
         id: 'web_search', name: 'Web Search', category: 'web', browserNative: false,
         description: 'Search the web via Search API (Brave/SerpAPI — needs backend key)',
-        inputSchema: { query: { type: 'string', required: true }, limit: { type: 'number', description: 'Max results' } },
+        inputSchema: { query: { type: 'string', description: 'Search query', required: true }, limit: { type: 'number', description: 'Max results' } },
         async mockExecute(i) { return { results: [{ title: `Top result for: ${i['query']}`, snippet: 'Relevant finding.', url: 'https://example.com' }] }; },
     },
     {
         id: 'code_exec', name: 'Code Executor', category: 'code', browserNative: false,
         description: 'Execute Python/JS in sandboxed container (requires backend sandbox)',
-        inputSchema: { language: { type: 'string', required: true }, code: { type: 'string', required: true } },
+        inputSchema: { language: { type: 'string', description: 'Language to run', required: true }, code: { type: 'string', description: 'Code to execute', required: true } },
         async mockExecute(i) { return { stdout: `[mock] ran ${i['language']}`, stderr: '', exitCode: 0 }; },
     },
     {
         id: 'file_rw', name: 'File R/W', category: 'file', browserNative: false,
         description: 'Read/write workspace files (requires Theia filesystem service)',
-        inputSchema: { operation: { type: 'string', required: true }, path: { type: 'string', required: true }, content: { type: 'string' } },
+        inputSchema: { operation: { type: 'string', description: 'Operation to perform', required: true }, path: { type: 'string', description: 'File path', required: true }, content: { type: 'string', description: 'Content to write' } },
         async mockExecute(i) {
             return i['operation'] === 'read' ? { content: `[mock content of ${i['path']}]` } : { success: true };
         },
@@ -66,7 +66,7 @@ const REGISTRY: ToolDefinition[] = [
     {
         id: 'http_client', name: 'HTTP Client', category: 'api', browserNative: true,
         description: 'Make outbound HTTP requests (runs natively in browser via fetch)',
-        inputSchema: { method: { type: 'string', required: true }, url: { type: 'string', required: true }, body: { type: 'string' }, headers: { type: 'string' } },
+        inputSchema: { method: { type: 'string', description: 'HTTP method', required: true }, url: { type: 'string', description: 'Full URL', required: true }, body: { type: 'string', description: 'Request body' }, headers: { type: 'string', description: 'Extra headers as JSON' } },
         async mockExecute(i) {
             // Real implementation: use fetch() — runs in browser (subject to CORS)
             if (typeof fetch !== 'undefined' && i['url'] && !String(i['url']).includes('localhost')) {
@@ -84,7 +84,7 @@ const REGISTRY: ToolDefinition[] = [
     {
         id: 'vector_search', name: 'Vector Search', category: 'memory', browserNative: true,
         description: 'In-memory semantic search using cosine similarity (runs in browser)',
-        inputSchema: { query: { type: 'string', required: true }, topK: { type: 'number' } },
+        inputSchema: { query: { type: 'string', description: 'Search query', required: true }, topK: { type: 'number', description: 'Number of results' } },
         async mockExecute(i) {
             // Cosine similarity against embedded chunks
             // sim(A,B) = A·B / (|A||B|) — standard cosine similarity
@@ -98,22 +98,19 @@ const REGISTRY: ToolDefinition[] = [
     {
         id: 'db_query', name: 'DB Query', category: 'data', browserNative: false,
         description: 'Query structured databases (requires backend DB connection)',
-        inputSchema: { query: { type: 'string', required: true }, database: { type: 'string', required: true } },
+        inputSchema: { query: { type: 'string', description: 'SQL query', required: true }, database: { type: 'string', description: 'Database name', required: true } },
         async mockExecute(i) { return { rows: [{ id: 1, result: `[mock] ${i['query']}` }], rowCount: 1 }; },
     },
     {
         id: 'shell', name: 'Shell', category: 'code', browserNative: false,
         description: 'Shell commands in sandboxed container (requires backend sandbox)',
-        inputSchema: { command: { type: 'string', required: true } },
+        inputSchema: { command: { type: 'string', description: 'Shell command to run', required: true } },
         async mockExecute(i) { return { stdout: `[mock] ${i['command']}`, stderr: '', exitCode: 0 }; },
     },
 ];
 
 /** Convert a ToolDefinition to OpenAI function-calling schema */
-export function toOpenAITool(tool: ToolDefinition): import('./agent-runtime').OAITool extends never ? never : {
-    type: 'function';
-    function: { name: string; description: string; parameters: { type: 'object'; properties: Record<string, unknown>; required: string[] } };
-} {
+export function toOpenAITool(tool: ToolDefinition): { type: 'function'; function: { name: string; description: string; parameters: { type: 'object'; properties: Record<string, unknown>; required: string[] } } } {
     return {
         type: 'function',
         function: {

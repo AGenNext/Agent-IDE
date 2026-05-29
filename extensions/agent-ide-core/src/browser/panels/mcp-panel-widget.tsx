@@ -316,7 +316,7 @@ function AddServerModal({ onAdd, onClose }: { onAdd: (form: AddServerForm) => Pr
                     {[['id', 'Server ID (unique slug)'], ['name', 'Display name'], ['command', 'Shell command']] .map(([field, label]) => (
                         <div key={field} style={{ marginBottom: 10 }}>
                             <div style={{ fontSize: 10, color: '#777', marginBottom: 3 }}>{label}</div>
-                            <input style={inputStyle} value={(form as Record<string, string>)[field]} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} />
+                            <input style={inputStyle} value={(form as unknown as Record<string, string>)[field]} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} />
                         </div>
                     ))}
                     <div style={{ marginBottom: 12 }}>

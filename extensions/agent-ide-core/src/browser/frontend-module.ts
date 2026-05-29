@@ -20,7 +20,7 @@ import { OptimizePanelWidget, OptimizePanelContribution } from './panels/optimiz
 import { McpPanelWidget, McpPanelContribution } from './panels/mcp-panel-widget';
 import { WorkspacesPanelWidget, WorkspacesPanelContribution } from './panels/workspaces-panel-widget';
 
-function bindPanel<W, C>(bind: Function, Widget: any, Contribution: any): void {
+function bindPanel<W, C>(bind: any, Widget: any, Contribution: any): void {
     bindViewContribution(bind, Contribution);
     bind(Widget).toSelf();
     bind(WidgetFactory).toDynamicValue((ctx: any) => ({
