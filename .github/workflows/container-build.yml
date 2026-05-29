@@ -46,7 +46,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push backend
-        uses: docker/build-push-action@0565240508400b76e2e56fbe9d34f34bb8c58d26 # v5.0.0
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
           file: Containerfile.backend
@@ -90,7 +90,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push IDE
-        uses: docker/build-push-action@0565240508400b76e2e56fbe9d34f34bb8c58d26 # v5.0.0
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
           file: Containerfile.ide
@@ -134,7 +134,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build and push combined
-        uses: docker/build-push-action@0565240508400b76e2e56fbe9d34f34bb8c58d26 # v5.0.0
+        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
           file: Containerfile
