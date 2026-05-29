@@ -25,6 +25,6 @@ export class AgentDashboardContribution
     }
 
     async onStart(_app: FrontendApplication): Promise<void> {
-        this.openView({ activate: false, reveal: true });
+        // Builder opens as the default landing view; dashboard remains accessible via menu
     }
 }

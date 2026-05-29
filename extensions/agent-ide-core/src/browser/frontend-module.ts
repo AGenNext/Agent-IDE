@@ -57,8 +57,9 @@ export default new ContainerModule(bind => {
     bindPanel(bind, GovernancePanelWidget, GovernancePanelContribution);
     bindPanel(bind, OptimizePanelWidget,   OptimizePanelContribution);
 
-    // Main area panels
+    // Main area panels — AgentBuilder is the default landing view
     bindPanel(bind, AgentBuilderWidget,  AgentBuilderContribution);
+    bind(FrontendApplicationContribution).toService(AgentBuilderContribution);
     bindPanel(bind, PlatformPanelWidget, PlatformPanelContribution);
     bindPanel(bind, ResearchPanelWidget, ResearchPanelContribution);
     bindPanel(bind, BenchPanelWidget,    BenchPanelContribution);

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { injectable, postConstruct } from '@theia/core/shared/inversify';
-import { ReactWidget } from '@theia/core/lib/browser';
-import { AbstractViewContribution } from '@theia/core/lib/browser';
+import { ReactWidget, AbstractViewContribution, FrontendApplicationContribution, FrontendApplication } from '@theia/core/lib/browser';
 import { CommandRegistry } from '@theia/core/lib/common';
 import { AgentBuilderCommand } from '../agent-ide-commands';
 
@@ -332,7 +331,10 @@ export class AgentBuilderWidget extends ReactWidget {
 }
 
 @injectable()
-export class AgentBuilderContribution extends AbstractViewContribution<AgentBuilderWidget> {
+export class AgentBuilderContribution
+    extends AbstractViewContribution<AgentBuilderWidget>
+    implements FrontendApplicationContribution {
+
     constructor() {
         super({
             widgetId: AgentBuilderWidget.ID,
@@ -346,5 +348,9 @@ export class AgentBuilderContribution extends AbstractViewContribution<AgentBuil
         commands.registerCommand(AgentBuilderCommand, {
             execute: () => this.openView({ activate: true }),
         });
+    }
+
+    async onStart(_app: FrontendApplication): Promise<void> {
+        this.openView({ activate: true, reveal: true });
     }
 }

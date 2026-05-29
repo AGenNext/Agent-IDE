@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
+    "rootDirs": ["src", "../../packages/agent-ide-types/src"],
     "outDir": "lib",
     "paths": {
       "@agennext/agent-ide-types": ["../../packages/agent-ide-types/src/index"]
