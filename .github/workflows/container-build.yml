@@ -1,8 +1,8 @@
-name: Container Build
+name: Container Build & Deploy
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     tags: ["v*.*.*"]
   pull_request:
     branches: [main]
@@ -143,3 +143,41 @@ jobs:
           labels: ${{ steps.meta-combined.outputs.labels }}
           cache-from: type=gha,scope=combined
           cache-to: type=gha,mode=max,scope=combined
+
+  deploy:
+    name: Rollout to Kubernetes
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-ide]
+    # Only deploy on push (not PRs); requires KUBECONFIG secret to be set
+    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+    environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+
+    steps:
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Write kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Set image tag
+        id: tag
+        run: echo "tag=sha-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Rollout backend
+        run: |
+          kubectl set image deployment/${{ vars.HELM_RELEASE }}-agent-ide-backend \
+            backend=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/agent-ide-backend:${{ steps.tag.outputs.tag }} \
+            -n ${{ vars.K8S_NAMESPACE || 'agent-ide' }}
+          kubectl rollout status deployment/${{ vars.HELM_RELEASE }}-agent-ide-backend \
+            -n ${{ vars.K8S_NAMESPACE || 'agent-ide' }} --timeout=5m
+
+      - name: Rollout IDE
+        run: |
+          kubectl set image deployment/${{ vars.HELM_RELEASE }}-agent-ide-ide \
+            ide=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/agent-ide:${{ steps.tag.outputs.tag }} \
+            -n ${{ vars.K8S_NAMESPACE || 'agent-ide' }}
+          kubectl rollout status deployment/${{ vars.HELM_RELEASE }}-agent-ide-ide \
+            -n ${{ vars.K8S_NAMESPACE || 'agent-ide' }} --timeout=5m
