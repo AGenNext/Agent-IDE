@@ -195,6 +195,98 @@ export async function activateWorkspace(id: string, token?: string): Promise<Wor
     });
 }
 
+// ─── Governance API ───────────────────────────────────────────────────────────
+
+export type PolicyDecisionAction = 'allow' | 'deny' | 'require-approval';
+
+export interface PolicyRule {
+    id:     string;
+    tools:  string[];
+    action: PolicyDecisionAction;
+    reason: string;
+}
+
+export interface LivePolicy {
+    id:          string;
+    tenantId:    string;
+    name:        string;
+    description: string;
+    enabled:     boolean;
+    priority:    number;
+    rules:       PolicyRule[];
+    version:     number;
+    createdAt:   string;
+    updatedAt:   string;
+}
+
+export interface AuditEntry {
+    id:         string;
+    tenantId:   string;
+    timestamp:  string;
+    event:      string;
+    agentId?:   string;
+    runId?:     string;
+    toolId?:    string;
+    decision?:  string;
+    policyId?:  string;
+    metadata:   Record<string, unknown>;
+}
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'timeout';
+
+export interface PendingApproval {
+    id:           string;
+    tenantId:     string;
+    runId:        string;
+    agentId:      string;
+    toolId:       string;
+    input:        Record<string, unknown>;
+    policyId?:    string;
+    reason:       string;
+    requestedAt:  string;
+    status:       ApprovalStatus;
+    resolvedAt?:  string;
+    resolvedBy?:  string;
+}
+
+export async function listPolicies(token?: string): Promise<LivePolicy[]> {
+    return apiFetch<LivePolicy[]>('/api/governance/policies', { headers: authHeaders(token) });
+}
+
+export async function createPolicy(data: Omit<LivePolicy, 'id' | 'tenantId' | 'createdAt' | 'updatedAt' | 'version'>, token?: string): Promise<LivePolicy> {
+    return apiFetch<LivePolicy>('/api/governance/policies', { method: 'POST', body: JSON.stringify(data), headers: authHeaders(token) });
+}
+
+export async function updatePolicy(id: string, patch: Partial<LivePolicy>, token?: string): Promise<LivePolicy> {
+    return apiFetch<LivePolicy>(`/api/governance/policies/${id}`, { method: 'PUT', body: JSON.stringify(patch), headers: authHeaders(token) });
+}
+
+export async function deletePolicy(id: string, token?: string): Promise<void> {
+    await apiFetch<unknown>(`/api/governance/policies/${id}`, { method: 'DELETE', headers: authHeaders(token) });
+}
+
+export async function listAuditLog(opts?: { event?: string; toolId?: string; runId?: string; limit?: number }, token?: string): Promise<AuditEntry[]> {
+    const params = new URLSearchParams();
+    if (opts?.event)  params.set('event', opts.event);
+    if (opts?.toolId) params.set('toolId', opts.toolId);
+    if (opts?.runId)  params.set('runId', opts.runId);
+    if (opts?.limit)  params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return apiFetch<AuditEntry[]>(`/api/governance/audit${qs ? `?${qs}` : ''}`, { headers: authHeaders(token) });
+}
+
+export async function listApprovals(token?: string): Promise<PendingApproval[]> {
+    return apiFetch<PendingApproval[]>('/api/governance/approvals', { headers: authHeaders(token) });
+}
+
+export async function approveRequest(id: string, token?: string): Promise<void> {
+    await apiFetch<unknown>(`/api/governance/approvals/${id}/approve`, { method: 'POST', body: '{}', headers: authHeaders(token) });
+}
+
+export async function rejectRequest(id: string, token?: string): Promise<void> {
+    await apiFetch<unknown>(`/api/governance/approvals/${id}/reject`, { method: 'POST', body: '{}', headers: authHeaders(token) });
+}
+
 // ─── Knowledge API ────────────────────────────────────────────────────────────
 
 export interface KnowledgeChunkSummary {

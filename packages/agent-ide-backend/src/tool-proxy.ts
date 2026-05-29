@@ -3,6 +3,9 @@ import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { ToolInvokeRequest, ToolInvokeResult } from './types';
+import { policyEngine } from './policy-engine';
+import { approvalGate } from './approval-gate';
+import { auditLog } from './audit-log';
 
 const execFileAsync = promisify(execFile);
 
@@ -152,9 +155,30 @@ const TOOL_HANDLERS: Record<string, (input: Record<string, unknown>) => Promise<
 export async function invokeTool(req: ToolInvokeRequest): Promise<ToolInvokeResult> {
     const handler = TOOL_HANDLERS[req.toolId];
     const start = Date.now();
+    const tenantId = req.agentId ?? 'user_demo';
+
     if (!handler) {
         return { toolId: req.toolId, output: null, durationMs: 0, success: false, error: `Unknown tool: ${req.toolId}` };
     }
+
+    // ── Policy check ──────────────────────────────────────────────────────────
+    const decision = policyEngine.evaluate({ toolId: req.toolId, agentId: req.agentId ?? '', runId: req.runId ?? '', tenantId, input: req.input });
+
+    auditLog.append({ tenantId, event: 'tool:call', agentId: req.agentId, runId: req.runId, toolId: req.toolId, decision: decision.action, policyId: decision.policyId, metadata: { reason: decision.reason } });
+
+    if (decision.action === 'deny') {
+        return { toolId: req.toolId, output: null, durationMs: Date.now() - start, success: false, error: `[GOVERNANCE BLOCK] ${decision.reason}` };
+    }
+
+    if (decision.action === 'require-approval') {
+        const approved = await approvalGate.request({ tenantId, runId: req.runId ?? '', agentId: req.agentId ?? '', toolId: req.toolId, input: req.input, policyId: decision.policyId, reason: decision.reason });
+        auditLog.append({ tenantId, event: approved ? 'tool:approved' : 'tool:rejected', agentId: req.agentId, runId: req.runId, toolId: req.toolId, policyId: decision.policyId, metadata: {} });
+        if (!approved) {
+            return { toolId: req.toolId, output: null, durationMs: Date.now() - start, success: false, error: `[GOVERNANCE REJECTED] Tool call rejected or timed out.` };
+        }
+    }
+
+    // ── Execute ───────────────────────────────────────────────────────────────
     try {
         const output = await handler(req.input);
         return { toolId: req.toolId, output, durationMs: Date.now() - start, success: true };

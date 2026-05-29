@@ -10,6 +10,9 @@ import { mcpManager } from './mcp-manager';
 import { workspaceManager } from './workspace-manager';
 import { requireAuth, authenticatePassword, issueToken, extractUser, AuthedRequest } from './auth';
 import { knowledgeStore, ingestText, ingestUrl, SearchResult } from './knowledge-store';
+import { policyEngine } from './policy-engine';
+import { auditLog } from './audit-log';
+import { approvalGate } from './approval-gate';
 import { RunRequest, ToolInvokeRequest } from './types';
 
 const app = express();
@@ -282,6 +285,74 @@ app.post('/api/workspaces/:id/activate', async (req: Request, res: Response) => 
     res.json(updated);
 });
 
+// ─── Governance ───────────────────────────────────────────────────────────────
+
+// GET /api/governance/policies
+app.get('/api/governance/policies', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    res.json(policyEngine.list(userId));
+});
+
+// POST /api/governance/policies — create
+app.post('/api/governance/policies', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const { name, description, enabled = true, priority = 10, rules = [] } = req.body as { name?: string; description?: string; enabled?: boolean; priority?: number; rules?: unknown[] };
+    if (!name) { res.status(400).json({ error: 'name is required' }); return; }
+    const policy = await policyEngine.create(userId, { name, description: description ?? '', enabled, priority, rules: rules as never[] });
+    res.status(201).json(policy);
+});
+
+// PUT /api/governance/policies/:id — update
+app.put('/api/governance/policies/:id', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const policy = policyEngine.get(req.params['id'] ?? '');
+    if (!policy || policy.tenantId !== userId) { res.status(404).json({ error: 'Policy not found' }); return; }
+    const updated = await policyEngine.update(policy.id, req.body as never);
+    res.json(updated);
+});
+
+// DELETE /api/governance/policies/:id
+app.delete('/api/governance/policies/:id', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const policy = policyEngine.get(req.params['id'] ?? '');
+    if (!policy || policy.tenantId !== userId) { res.status(404).json({ error: 'Policy not found' }); return; }
+    await policyEngine.delete(policy.id);
+    res.json({ deleted: true });
+});
+
+// GET /api/governance/audit — audit log (last N entries)
+app.get('/api/governance/audit', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const { event, toolId, runId, limit } = req.query as Record<string, string>;
+    res.json(auditLog.list(userId, { event, toolId, runId, limit: limit ? Number(limit) : 100 }));
+});
+
+// GET /api/governance/approvals — pending and recent approvals
+app.get('/api/governance/approvals', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    res.json(approvalGate.list(userId));
+});
+
+// POST /api/governance/approvals/:id/approve
+app.post('/api/governance/approvals/:id/approve', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const approval = approvalGate.get(req.params['id'] ?? '');
+    if (!approval || approval.tenantId !== userId) { res.status(404).json({ error: 'Approval not found' }); return; }
+    const ok = approvalGate.resolve(approval.id, true, userId);
+    auditLog.append({ tenantId: userId, event: 'tool:approved', agentId: approval.agentId, runId: approval.runId, toolId: approval.toolId, policyId: approval.policyId, metadata: { resolvedBy: userId } });
+    res.json({ ok });
+});
+
+// POST /api/governance/approvals/:id/reject
+app.post('/api/governance/approvals/:id/reject', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const approval = approvalGate.get(req.params['id'] ?? '');
+    if (!approval || approval.tenantId !== userId) { res.status(404).json({ error: 'Approval not found' }); return; }
+    const ok = approvalGate.resolve(approval.id, false, userId);
+    auditLog.append({ tenantId: userId, event: 'tool:rejected', agentId: approval.agentId, runId: approval.runId, toolId: approval.toolId, policyId: approval.policyId, metadata: { resolvedBy: userId } });
+    res.json({ ok });
+});
+
 // ─── Knowledge / vector store ─────────────────────────────────────────────────
 
 // GET /api/knowledge — list chunks for the calling tenant
@@ -396,6 +467,15 @@ server.listen(PORT, async () => {
     // Load knowledge store
     await knowledgeStore.load();
     console.log(`  Knowledge:   ${knowledgeStore.count()} chunks loaded`);
+
+    // Load governance (policies, audit log)
+    await policyEngine.load();
+    await policyEngine.ensureDefaults('user_demo');
+    await auditLog.load();
+    console.log(`  Governance:  ${policyEngine.list('user_demo').length} policies, ${auditLog.count('user_demo')} audit entries`);
+
+    // Prune approval gate every hour
+    setInterval(() => approvalGate.prune(), 60 * 60 * 1000);
 });
 
 // Prune old runs every 30 minutes

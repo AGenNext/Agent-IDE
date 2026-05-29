@@ -78,13 +78,16 @@
 - [ ] pgvector integration (replace in-memory store when DATABASE_URL is set)
 - [ ] Workspace graph visualization (provenance graph across runs/agents/artifacts)
 
-## Phase 7 — Governance Engine
+## Phase 7 — Governance Engine ✅ (initial)
 
-- [ ] OPA/OpenFGA policy evaluation engine
-- [ ] Real-time policy check on every tool call
-- [ ] Audit log persistence to database
-- [ ] Approval gate UI connected to real execution hold
-- [ ] Policy version control and rollback
+- [x] `policy-engine.ts` — tenant-scoped policy CRUD with versioning; rule evaluation (exact tool match + `*` wildcard); built-in "Tool Safety" policy seeds on first run (shell/code_exec/db_query → require-approval, everything else → allow); `.policies.json` persistence
+- [x] `audit-log.ts` — append-only JSONL audit log (`.audit.jsonl`); in-memory circular buffer (2000 entries); list with event/tool/run filters
+- [x] `approval-gate.ts` — real execution hold: `request()` suspends the tool-proxy via a Promise; `resolve()` unblocks it; broadcasts `governance:approval-request` and `governance:approval-resolved` over WebSocket; 5-min timeout auto-rejects
+- [x] `tool-proxy.ts` — policy check before every tool call: deny → blocked result; require-approval → suspends until human resolves; audit entry written for every outcome
+- [x] Governance REST API: CRUD on policies, audit log query, approvals list, approve/reject endpoints
+- [x] Governance panel wired: Policies tab shows real policies with enable/disable/delete; Audit tab streams real log entries with filter; Approvals tab polls every 5s, renders pending approvals with full input JSON, resolves via real endpoint
+- [ ] OPA/OpenFGA integration (replace in-process evaluator)
+- [ ] Policy version history and rollback
 
 ## Phase 8 — Collaboration & Scale
 
