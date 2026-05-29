@@ -10,277 +10,176 @@ export type TraceStepType = 'thought' | 'action' | 'observation' | 'result' | 'e
 export type EdgeType = 'produces' | 'consumes' | 'triggers' | 'governs' | 'references';
 export type NodeType = 'agent' | 'task' | 'artifact' | 'knowledge' | 'tool';
 
-export interface Agent {
-    id: string;
-    name: string;
-    description: string;
-    version: string;
-    skills: Skill[];
-    tools: Tool[];
-    status: AgentStatus;
-    createdAt: string;
-    updatedAt: string;
-    metadata: Record<string, unknown>;
+export interface Agent { id: string; name: string; description: string; version: string; skills: Skill[]; tools: Tool[]; status: AgentStatus; createdAt: string; updatedAt: string; metadata: Record<string, unknown>; }
+export interface Skill { id: string; name: string; description: string; agentId: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>; }
+export interface Tool { id: string; name: string; description: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>; mcpServerId?: string; }
+export interface Task { id: string; title: string; description: string; status: TaskStatus; assignedAgentId?: string; parentTaskId?: string; subtaskIds: string[]; artifactIds: string[]; createdAt: string; updatedAt: string; completedAt?: string; metadata: Record<string, unknown>; }
+export interface Artifact { id: string; name: string; type: ArtifactType; content?: string; contentRef?: string; taskId: string; agentId: string; createdAt: string; metadata: Record<string, unknown>; }
+export interface AgentRun { id: string; agentId: string; taskId: string; status: TaskStatus; startedAt: string; completedAt?: string; trace: TraceStep[]; artifactIds: string[]; errorMessage?: string; metadata: Record<string, unknown>; }
+export interface TraceStep { id: string; runId: string; sequence: number; type: TraceStepType; content: string; toolName?: string; toolInput?: Record<string, unknown>; toolOutput?: unknown; timestamp: string; durationMs?: number; }
+export interface GovernancePolicy { id: string; name: string; description: string; scope: 'global' | 'workspace' | 'agent' | 'tool'; rules: GovernanceRule[]; enabled: boolean; createdAt: string; updatedAt: string; }
+export interface GovernanceRule { id: string; policyId: string; condition: string; action: GovernanceAction; rationale: string; priority: number; }
+export interface WorkspaceGraphNode { id: string; type: NodeType; label: string; data: Agent | Task | Artifact | Tool | Record<string, unknown>; position: { x: number; y: number }; metadata: Record<string, unknown>; }
+export interface WorkspaceGraphEdge { id: string; source: string; target: string; type: EdgeType; label?: string; metadata: Record<string, unknown>; }
+export interface WorkspaceGraph { id: string; name: string; nodes: WorkspaceGraphNode[]; edges: WorkspaceGraphEdge[]; createdAt: string; updatedAt: string; }
+export interface WorkspaceSummary { name: string; agentCount: number; taskCount: number; runCount: number; artifactCount: number; governancePolicyCount: number; governanceStatus: 'active' | 'degraded' | 'inactive'; }
+
+// ─── Token Flow Recording ────────────────────────────────────────────────────
+
+export interface TokenRecord { callIndex: number; stepSequence: number; stepType: TraceStepType; model: string; inputTokens: number; outputTokens: number; cachedTokens: number; durationMs: number; loopIndex?: number; }
+export interface TokenFlowRecord { flowId: string; agentId: string; taskId: string; model: string; calls: TokenRecord[]; totalInputTokens: number; totalOutputTokens: number; totalCachedTokens: number; loopCount: number; totalCalls: number; startedAt: string; completedAt: string; durationMs: number; }
+
+// ─── Agent FinOps ───────────────────────────────────────────────────────────
+
+/**
+ * Agent FinOps — token cost accounting and budget management.
+ *
+ * Cost formulas follow provider pricing models:
+ *   totalInputCost  = inputTokens  / 1000 * inputCostPer1KTokens
+ *   totalOutputCost = outputTokens / 1000 * outputCostPer1KTokens
+ *   totalCost       = totalInputCost + totalOutputCost
+ *
+ * Source: Anthropic API pricing (https://anthropic.com/pricing),
+ *         OpenAI API pricing (https://openai.com/pricing)
+ *
+ * tokenEfficiencyRatio = outputTokens / inputTokens
+ *   ratio > 1.0 indicates output-heavy (generative); < 0.5 is input-heavy (retrieval).
+ *
+ * cachedTokenSavings = cachedTokens * inputCostPer1KTokens / 1000
+ *   Source: Anthropic prompt caching — cached reads billed at 10% of base input rate.
+ *
+ * projectedMonthlyUsd = totalCost * (30 * 86400 * 1000 / windowMs)
+ */
+export interface FinOpsMetrics {
+    inputCostPer1KTokens: number;
+    outputCostPer1KTokens: number;
+    totalInputCost: number;
+    totalOutputCost: number;
+    totalCost: number;
+    budgetUsd: number;
+    budgetRemaining: number;
+    costPerTask: number;
+    tokenEfficiencyRatio: number;
+    cachedTokenSavings: number;
+    projectedMonthlyUsd: number;
+    windowMs: number;
 }
 
-export interface Skill {
-    id: string;
-    name: string;
-    description: string;
-    agentId: string;
-    inputSchema: Record<string, unknown>;
-    outputSchema: Record<string, unknown>;
+// ─── Distributed Tracing (OpenTelemetry-compatible) ──────────────────────────────
+
+/**
+ * Span-based distributed tracing.
+ * Compatible with OpenTelemetry trace data model v1.26.
+ * Source: https://opentelemetry.io/docs/concepts/signals/traces/
+ *
+ * durationMs = endTimeMs - startTimeMs  (wall-clock, monotonic)
+ * depth = max nesting level across all spans in the trace
+ * p99LatencyMs = 99th percentile of span durationMs values
+ */
+export interface TraceSpan {
+    spanId: string;
+    traceId: string;
+    parentSpanId?: string;
+    operationName: string;
+    serviceName: string;
+    startTimeMs: number;
+    endTimeMs: number;
+    durationMs: number;
+    status: 'ok' | 'error' | 'unset';
+    attributes: Record<string, string | number | boolean>;
+    events: { name: string; timeMs: number; attributes?: Record<string, unknown> }[];
 }
 
-export interface Tool {
-    id: string;
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
-    outputSchema: Record<string, unknown>;
-    mcpServerId?: string;
+export interface TraceRecord {
+    traceId: string;
+    rootSpan: TraceSpan;
+    spans: TraceSpan[];
+    totalDurationMs: number;
+    spanCount: number;
+    errorCount: number;
+    depth: number;
+    p99LatencyMs: number;
 }
 
-export interface Task {
-    id: string;
-    title: string;
-    description: string;
-    status: TaskStatus;
-    assignedAgentId?: string;
-    parentTaskId?: string;
-    subtaskIds: string[];
-    artifactIds: string[];
-    createdAt: string;
-    updatedAt: string;
-    completedAt?: string;
-    metadata: Record<string, unknown>;
-}
+// ─── Monitor / Observability ─────────────────────────────────────────────────────
 
-export interface Artifact {
-    id: string;
-    name: string;
-    type: ArtifactType;
-    content?: string;
-    contentRef?: string;
-    taskId: string;
-    agentId: string;
-    createdAt: string;
-    metadata: Record<string, unknown>;
-}
-
-export interface AgentRun {
-    id: string;
-    agentId: string;
-    taskId: string;
-    status: TaskStatus;
-    startedAt: string;
-    completedAt?: string;
-    trace: TraceStep[];
-    artifactIds: string[];
-    errorMessage?: string;
-    metadata: Record<string, unknown>;
-}
-
-export interface TraceStep {
-    id: string;
-    runId: string;
-    sequence: number;
-    type: TraceStepType;
-    content: string;
-    toolName?: string;
-    toolInput?: Record<string, unknown>;
-    toolOutput?: unknown;
+/**
+ * Agent runtime monitoring snapshot.
+ *
+ * errorRatePct       = failedRuns / totalRuns * 100
+ * throughputPerMin   = completedTasks / (windowMs / 60000)
+ * p99LatencyMs       = 99th percentile run duration in the monitoring window
+ *
+ * Source: Google SRE Book, Chapter 6 — Monitoring Distributed Systems
+ *   (https://sre.google/sre-book/monitoring-distributed-systems/)
+ */
+export interface MonitorSnapshot {
     timestamp: string;
-    durationMs?: number;
-}
-
-export interface GovernancePolicy {
-    id: string;
-    name: string;
-    description: string;
-    scope: 'global' | 'workspace' | 'agent' | 'tool';
-    rules: GovernanceRule[];
-    enabled: boolean;
-    createdAt: string;
-    updatedAt: string;
-}
-
-export interface GovernanceRule {
-    id: string;
-    policyId: string;
-    condition: string;
-    action: GovernanceAction;
-    rationale: string;
-    priority: number;
-}
-
-export interface WorkspaceGraphNode {
-    id: string;
-    type: NodeType;
-    label: string;
-    data: Agent | Task | Artifact | Tool | Record<string, unknown>;
-    position: { x: number; y: number };
-    metadata: Record<string, unknown>;
-}
-
-export interface WorkspaceGraphEdge {
-    id: string;
-    source: string;
-    target: string;
-    type: EdgeType;
-    label?: string;
-    metadata: Record<string, unknown>;
-}
-
-export interface WorkspaceGraph {
-    id: string;
-    name: string;
-    nodes: WorkspaceGraphNode[];
-    edges: WorkspaceGraphEdge[];
-    createdAt: string;
-    updatedAt: string;
-}
-
-export interface WorkspaceSummary {
-    name: string;
-    agentCount: number;
-    taskCount: number;
-    runCount: number;
-    artifactCount: number;
-    governancePolicyCount: number;
-    governanceStatus: 'active' | 'degraded' | 'inactive';
-}
-
-// ─── Token Flow Recording ───────────────────────────────────────────────────
-
-export interface TokenRecord {
-    callIndex: number;
-    stepSequence: number;
-    stepType: TraceStepType;
-    model: string;
-    inputTokens: number;
-    outputTokens: number;
-    cachedTokens: number;
-    durationMs: number;
-    loopIndex?: number;
-}
-
-export interface TokenFlowRecord {
-    flowId: string;
     agentId: string;
-    taskId: string;
-    model: string;
-    calls: TokenRecord[];
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    totalCachedTokens: number;
-    loopCount: number;
-    totalCalls: number;
-    startedAt: string;
-    completedAt: string;
-    durationMs: number;
+    health: 'healthy' | 'degraded' | 'unhealthy';
+    uptimePct: number;
+    errorRatePct: number;
+    throughputPerMin: number;
+    queueDepth: number;
+    activeRuns: number;
+    avgLatencyMs: number;
+    p99LatencyMs: number;
+    memoryUsageMb: number;
+    cpuUsagePct: number;
 }
 
-// ─── Performance Metrics ────────────────────────────────────────────────────
+// ─── Headless Repo Source (Platform multi-repo consumption) ───────────────────
+
+/**
+ * A connected external repository the Platform can consume headlessly.
+ * Fetch protocol: GET https://api.github.com/repos/{owner}/{repo}/contents/agent-ide-manifest.json
+ * The manifest declares what the repo contributes: agents, benchSuites, tools.
+ */
+export interface RepoSource {
+    id: string;
+    owner: string;
+    repo: string;
+    branch: string;
+    type: 'agent-bench' | 'agent-lib' | 'tool-lib' | 'custom';
+    manifestPath: string;
+    token?: string;
+    lastSyncAt?: string;
+    syncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+    errorMessage?: string;
+    imported: { agents: number; benchSuites: number; tools: number; tasks: number };
+}
+
+// ─── Performance Metrics (sourced from research papers) ─────────────────────
 
 /**
  * Network platform metrics.
- * RTT/throughput sourced from Jurasovic 2006 (multi-agent communication study).
- * Connection cost Lt(h), stability istabt(h), security isect(h) from Król 2008.
+ * avgRttMs/throughput: Jurasovic 2006, multi-agent comm study.
+ * stabilityScore istabt(h), connectionCostMs Lt(h), securityScore isect(h):
+ *   Król 2008, "Agent-Based Systems Architecture".
  */
-export interface PlatformMetrics {
-    avgRttMs: number;
-    minRttMs: number;
-    maxRttMs: number;
-    rttStdDevMs: number;
-    throughputTokensPerSec: number;
-    messageOverheadPct: number;
-    stabilityScore: number;
-    connectionCostMs: number;
-    securityScore: number;
-}
+export interface PlatformMetrics { avgRttMs: number; minRttMs: number; maxRttMs: number; rttStdDevMs: number; throughputTokensPerSec: number; messageOverheadPct: number; stabilityScore: number; connectionCostMs: number; securityScore: number; }
 
 /**
- * Multi-agent planning metrics.
- * All 7 dimensions from REALM-Bench (Geng & Chang, 2025):
- * task completion rate, on-time rate, makespan, disruption recovery,
- * constraint satisfaction, planning efficiency, inter-agent dependency resolution.
+ * Multi-agent planning metrics — all 7 dimensions from REALM-Bench.
+ * Source: Geng & Chang 2025, "REALM-Bench: A Real-World Multi-Agent Planning Benchmark".
  */
-export interface PlanningMetrics {
-    taskCompletionRate: number;
-    onTimeRate: number;
-    makespanMs: number;
-    disruptionRecoveryRate: number;
-    constraintSatisfactionRate: number;
-    planningEfficiency: number;
-    interAgentDependencyResolutionRate: number;
-}
+export interface PlanningMetrics { taskCompletionRate: number; onTimeRate: number; makespanMs: number; disruptionRecoveryRate: number; constraintSatisfactionRate: number; planningEfficiency: number; interAgentDependencyResolutionRate: number; }
 
 /**
- * LLM agent quality metrics from Härer 2025:
- * response accuracy rate, tool execution success rate,
- * average reasoning depth, coordination overhead, hallucination rate.
+ * LLM agent quality metrics.
+ * Source: Härer 2025, "Evaluating LLM-Based Agent Systems".
  */
-export interface LLMQualityMetrics {
-    responseAccuracyRate: number;
-    toolExecutionSuccessRate: number;
-    avgReasoningDepth: number;
-    coordinationOverheadMs: number;
-    hallucinationRate: number;
-}
+export interface LLMQualityMetrics { responseAccuracyRate: number; toolExecutionSuccessRate: number; avgReasoningDepth: number; coordinationOverheadMs: number; hallucinationRate: number; }
 
 /**
- * AgentBench environment scores (Liu et al., 2023).
- * 8 interactive evaluation environments:
- * OS (shell), DB (database), KG (knowledge graph), HH (household),
- * WS (web shopping), ALF (AlfWorld), WB (WebArena), LTP (lateral thinking).
- * Each score: 0–1 success rate. overall = mean across environments.
+ * AgentBench environment scores — Liu et al. 2023.
+ * 8 interactive environments: OS (shell/file), DB (database), KG (knowledge graph),
+ * HH (household), WS (web shopping), ALF (AlfWorld), WB (WebArena), LTP (lateral thinking).
+ * Each score: 0–1 success rate. overall = arithmetic mean across all 8 environments.
+ * Source: Liu et al. 2023, "AgentBench: Evaluating LLMs as Agents", arXiv:2308.03688.
  */
-export interface AgentBenchScores {
-    os: number;
-    db: number;
-    kg: number;
-    hh: number;
-    ws: number;
-    alf: number;
-    wb: number;
-    ltp: number;
-    overall: number;
-}
+export interface AgentBenchScores { os: number; db: number; kg: number; hh: number; ws: number; alf: number; wb: number; ltp: number; overall: number; }
 
-export interface EvaluationMetricSet {
-    evaluationId: string;
-    agentId: string;
-    framework: 'langgraph' | 'autogen' | 'crewai' | 'swarm' | 'custom';
-    platform: PlatformMetrics;
-    planning: PlanningMetrics;
-    quality: LLMQualityMetrics;
-    agentBench?: AgentBenchScores;
-    tokenFlow: TokenFlowRecord;
-    runAt: string;
-}
-
-export interface PerformanceSample {
-    runIndex: number;
-    durationMs: number;
-    totalTokens: number;
-    inputTokens: number;
-    outputTokens: number;
-    stepsCount: number;
-    loopCount: number;
-    toolCallCount: number;
-    successRate: number;
-}
-
-export interface PerformanceTestResult {
-    testId: string;
-    agentId: string;
-    framework: string;
-    model: string;
-    samples: PerformanceSample[];
-    platform: PlatformMetrics;
-    planning: PlanningMetrics;
-    quality: LLMQualityMetrics;
-    agentBench?: AgentBenchScores;
-    runAt: string;
-}
+export interface EvaluationMetricSet { evaluationId: string; agentId: string; framework: 'langgraph' | 'autogen' | 'crewai' | 'swarm' | 'custom'; platform: PlatformMetrics; planning: PlanningMetrics; quality: LLMQualityMetrics; agentBench?: AgentBenchScores; finops?: FinOpsMetrics; tokenFlow: TokenFlowRecord; runAt: string; }
+export interface PerformanceSample { runIndex: number; durationMs: number; totalTokens: number; inputTokens: number; outputTokens: number; stepsCount: number; loopCount: number; toolCallCount: number; successRate: number; }
+export interface PerformanceTestResult { testId: string; agentId: string; framework: string; model: string; samples: PerformanceSample[]; platform: PlatformMetrics; planning: PlanningMetrics; quality: LLMQualityMetrics; agentBench?: AgentBenchScores; finops?: FinOpsMetrics; runAt: string; }
