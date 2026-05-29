@@ -22,7 +22,9 @@ function safePath(rel: string): string {
     return resolved;
 }
 
-const TOOL_HANDLERS: Record<string, (input: Record<string, unknown>) => Promise<unknown>> = {
+interface ToolContext { tenantId: string; agentId?: string; runId?: string }
+
+const TOOL_HANDLERS: Record<string, (input: Record<string, unknown>, ctx: ToolContext) => Promise<unknown>> = {
 
     // ── File R/W ──────────────────────────────────────────────────────────────
     file_rw: async (input) => {
@@ -155,9 +157,9 @@ const TOOL_HANDLERS: Record<string, (input: Record<string, unknown>) => Promise<
     },
 
     // ── Repo Indexer ──────────────────────────────────────────────────────────
-    repo_index: async (input) => {
+    repo_index: async (input, ctx) => {
         const rel         = String(input['path'] ?? '.');
-        const tenantId    = String(input['tenantId'] ?? 'user_demo');
+        const tenantId    = ctx.tenantId;   // always from authenticated request, never from input
         const rawExts     = input['extensions'];
         const extensions  = Array.isArray(rawExts) ? rawExts.map(String) : ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.md', '.json', '.yaml', '.yml', '.sh'];
         const maxFileSize = Number(input['maxFileSize'] ?? 100 * 1024); // 100 KB
@@ -223,7 +225,7 @@ export async function invokeTool(req: ToolInvokeRequest): Promise<ToolInvokeResu
 
     // ── Execute ───────────────────────────────────────────────────────────────
     try {
-        const output = await handler(req.input);
+        const output = await handler(req.input, { tenantId, agentId: req.agentId, runId: req.runId });
         return { toolId: req.toolId, output, durationMs: Date.now() - start, success: true };
     } catch (err: unknown) {
         const error = err instanceof Error ? err.message : String(err);

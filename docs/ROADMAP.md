@@ -38,20 +38,23 @@
 - [x] GET `/api/tools`, GET `/api/config`, GET `/health`
 - [x] Live agent loop: ReAct pattern with real OpenAI/Anthropic API calls
 - [x] Offline/demo mode — synthetic trace when no API key configured
-- [x] Tool proxy: `file_rw`, `shell`, `http_client`, `browser`, `web_search`, `vector_search`, `code_exec`, `db_query`
+- [x] Tool proxy: `file_rw`, `shell`, `http_client`, `browser`, `web_search`, `vector_search`, `code_exec`, `db_query`, `repo_index`
+- [x] `repo_index` tool — walks local repo, chunks source files by extension, ingests into knowledge store; `vector_search` for cheap semantic code search; tenantId sourced from authenticated request context (not user input)
 - [x] `backend-client.ts` — frontend HTTP+WebSocket client for backend
 - [x] Runs panel — "⚡ Live Run" button when backend detected, streams trace via WebSocket
-- [ ] Tool execution approval flow (Governance → hold tool call until approved)
+- [x] Tool execution approval flow (Governance → hold tool call until approved) — Promise-based execution hold in `approval-gate.ts`; WebSocket broadcast of approval events; 5-min auto-reject timeout
 - [ ] Replay panel reading real persisted traces from persistence layer
 - [ ] WebSocket fan-out to multiple subscribers
 
-## Phase 4 — MCP Gateway
+## Phase 4 — MCP Gateway ✅
 
-- [ ] Real MCP server connections (stdio via backend bridge)
-- [ ] MCP panel: live server connect/disconnect with status polling
-- [ ] Tool call routing through governance approval gate
-- [ ] MCP server configuration persistence (`.mcp.json` in workspace)
-- [ ] Tool schema discovery from live MCP servers
+- [x] Real MCP server connections (stdio via backend bridge) — `mcp-manager.ts` full stdio bridge, JSON-RPC 2.0, 15s RPC timeout
+- [x] MCP panel: live server connect/disconnect with status polling; AddServerModal
+- [x] Tool call routing through governance approval gate
+- [x] MCP server configuration persistence (`.mcp.json` in workspace)
+- [x] Tool schema discovery from live MCP servers — `tools/list` on connect; `getAllTools()` aggregates all connected servers
+- [x] GitHub MCP server in defaults (`npx -y @modelcontextprotocol/server-github`, reads `GITHUB_TOKEN`)
+- [x] MCP tools surfaced to agent loop — `buildToolSchemas()` appends `mcp__<serverId>__<toolName>`; routing via `mcpManager.callTool()`
 
 ## Phase 5 — Authentication & Workspaces ✅ (initial)
 
