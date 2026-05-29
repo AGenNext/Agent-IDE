@@ -1,0 +1,12 @@
+export { AgentDashboardWidget } from './agent-dashboard-widget';
+export { AgentDashboardContribution } from './agent-dashboard-contribution';
+export { AgentIdeMenuContribution } from './agent-ide-menus';
+export * from './agent-ide-commands';
+export { AgentsPanelWidget, AgentsPanelContribution } from './panels/agents-panel-widget';
+export { TasksPanelWidget, TasksPanelContribution } from './panels/tasks-panel-widget';
+export { KnowledgePanelWidget, KnowledgePanelContribution } from './panels/knowledge-panel-widget';
+export { ArtifactsPanelWidget, ArtifactsPanelContribution } from './panels/artifacts-panel-widget';
+export { RunsPanelWidget, RunsPanelContribution } from './panels/runs-panel-widget';
+export { ReplayPanelWidget, ReplayPanelContribution } from './panels/replay-panel-widget';
+export { GovernancePanelWidget, GovernancePanelContribution } from './panels/governance-panel-widget';
+export { AgentBuilderWidget, AgentBuilderContribution } from './agent-builder/agent-builder-widget';

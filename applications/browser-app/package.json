@@ -1,11 +1,33 @@
 {
-  "name": "browser-app",
+  "name": "@agennext/browser-app",
+  "version": "0.1.0",
   "private": true,
-  "dependencies": {
-    "@theia/core": "latest"
-  },
   "scripts": {
-    "start": "theia start",
-    "build": "echo build"
+    "build": "theia build --mode development",
+    "start": "theia start --port 3000",
+    "typecheck": "echo 'bundled by @theia/cli'",
+    "watch": "theia build --watch --mode development"
+  },
+  "dependencies": {
+    "@theia/core": "^1.44.0",
+    "@theia/editor": "^1.44.0",
+    "@theia/filesystem": "^1.44.0",
+    "@theia/navigator": "^1.44.0",
+    "@theia/terminal": "^1.44.0",
+    "@theia/workspace": "^1.44.0",
+    "@agennext/agent-ide-core": "0.1.0"
+  },
+  "devDependencies": {
+    "@theia/cli": "^1.44.0"
+  },
+  "theia": {
+    "target": "browser",
+    "frontend": {
+      "config": {
+        "applicationName": "Agent IDE",
+        "defaultTheme": "dark",
+        "reloadOnReconnect": true
+      }
+    }
   }
 }
