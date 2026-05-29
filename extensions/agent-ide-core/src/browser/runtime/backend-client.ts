@@ -195,6 +195,61 @@ export async function activateWorkspace(id: string, token?: string): Promise<Wor
     });
 }
 
+// ─── Knowledge API ────────────────────────────────────────────────────────────
+
+export interface KnowledgeChunkSummary {
+    id:             string;
+    title:          string;
+    source:         string;
+    createdAt:      string;
+    contentPreview: string;
+    metadata:       Record<string, unknown>;
+}
+
+export interface KnowledgeSearchResult {
+    score:          number;
+    id:             string;
+    title:          string;
+    source:         string;
+    contentPreview: string;
+    createdAt:      string;
+}
+
+export async function listKnowledge(token?: string): Promise<KnowledgeChunkSummary[]> {
+    return apiFetch<KnowledgeChunkSummary[]>('/api/knowledge', { headers: authHeaders(token) });
+}
+
+export async function searchKnowledge(query: string, topK = 5, token?: string): Promise<KnowledgeSearchResult[]> {
+    return apiFetch<KnowledgeSearchResult[]>('/api/knowledge/search', {
+        method: 'POST',
+        body: JSON.stringify({ query, topK }),
+        headers: authHeaders(token),
+    });
+}
+
+export async function ingestText(title: string, content: string, token?: string): Promise<{ chunks: number; ids: string[] }> {
+    return apiFetch<{ chunks: number; ids: string[] }>('/api/knowledge/ingest', {
+        method: 'POST',
+        body: JSON.stringify({ title, content }),
+        headers: authHeaders(token),
+    });
+}
+
+export async function ingestUrl(url: string, token?: string): Promise<{ chunks: number; ids: string[] }> {
+    return apiFetch<{ chunks: number; ids: string[] }>('/api/knowledge/ingest', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', url }),
+        headers: authHeaders(token),
+    });
+}
+
+export async function deleteKnowledgeChunk(id: string, token?: string): Promise<void> {
+    await apiFetch<unknown>(`/api/knowledge/${id}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
+    });
+}
+
 // ─── MCP API ──────────────────────────────────────────────────────────────────
 
 export async function listMcpServers(): Promise<McpServerState[]> {

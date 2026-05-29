@@ -67,12 +67,16 @@
 - [ ] Per-user workspace provisioning via isolated Docker containers
 - [ ] Tenant-scoped MCP server configs (per-workspace `.mcp.json`)
 
-## Phase 6 — Knowledge & Memory
+## Phase 6 — Knowledge & Memory ✅ (initial)
 
-- [ ] pgvector integration for real vector search
-- [ ] Knowledge ingest pipeline (web → chunk → embed → store)
-- [ ] Workspace graph visualization (replacing SVG placeholder)
-- [ ] Agent memory: short-term (run context) and long-term (vector store)
+- [x] `knowledge-store.ts` — in-memory vector store with cosine similarity search; 128-dim n-gram hash embedding (no deps) + OpenAI `text-embedding-3-small` when key is set; `.knowledge.json` persistence
+- [x] Knowledge REST API: list, search (POST with query + topK), ingest text, ingest URL, get, delete
+- [x] Knowledge ingest pipeline: `chunkText()` splits at word boundaries with overlap; `ingestText()` / `ingestUrl()` (fetches, strips HTML, chunks, embeds)
+- [x] Agent memory: completed runs automatically store their final result as a knowledge chunk (`run:<runId>` source, tenanted to the agent user)
+- [x] `backend-client.ts` — listKnowledge, searchKnowledge, ingestText, ingestUrl, deleteKnowledgeChunk
+- [x] Knowledge panel wired to backend: Browse lists real chunks with delete; Search calls `/api/knowledge/search`; Ingest POSTs text or URL; live/demo fallback
+- [ ] pgvector integration (replace in-memory store when DATABASE_URL is set)
+- [ ] Workspace graph visualization (provenance graph across runs/agents/artifacts)
 
 ## Phase 7 — Governance Engine
 

@@ -9,6 +9,7 @@ import { runStore } from './run-store';
 import { mcpManager } from './mcp-manager';
 import { workspaceManager } from './workspace-manager';
 import { requireAuth, authenticatePassword, issueToken, extractUser, AuthedRequest } from './auth';
+import { knowledgeStore, ingestText, ingestUrl, SearchResult } from './knowledge-store';
 import { RunRequest, ToolInvokeRequest } from './types';
 
 const app = express();
@@ -281,6 +282,63 @@ app.post('/api/workspaces/:id/activate', async (req: Request, res: Response) => 
     res.json(updated);
 });
 
+// ─── Knowledge / vector store ─────────────────────────────────────────────────
+
+// GET /api/knowledge — list chunks for the calling tenant
+app.get('/api/knowledge', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    res.json(knowledgeStore.list(userId).map(c => ({ id: c.id, title: c.title, source: c.source, createdAt: c.createdAt, metadata: c.metadata, contentPreview: c.content.slice(0, 200) })));
+});
+
+// POST /api/knowledge/search — semantic search
+app.post('/api/knowledge/search', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const { query, topK = 5 } = req.body as { query?: string; topK?: number };
+    if (!query) { res.status(400).json({ error: 'query is required' }); return; }
+    try {
+        const results: SearchResult[] = await knowledgeStore.search(userId, query, topK);
+        res.json(results.map(r => ({ score: r.score, id: r.chunk.id, title: r.chunk.title, source: r.chunk.source, contentPreview: r.chunk.content.slice(0, 400), createdAt: r.chunk.createdAt })));
+    } catch (err: unknown) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+});
+
+// POST /api/knowledge/ingest — ingest text or URL
+app.post('/api/knowledge/ingest', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const { type, title, content, url, metadata } = req.body as { type?: string; title?: string; content?: string; url?: string; metadata?: Record<string, unknown> };
+    try {
+        if (type === 'url' && url) {
+            const chunks = await ingestUrl(userId, url);
+            res.status(201).json({ chunks: chunks.length, ids: chunks.map(c => c.id) });
+        } else if (content) {
+            const chunks = await ingestText(userId, title ?? 'Untitled', content, 'manual', metadata ?? {});
+            res.status(201).json({ chunks: chunks.length, ids: chunks.map(c => c.id) });
+        } else {
+            res.status(400).json({ error: 'Provide content (text) or type=url with url' });
+        }
+    } catch (err: unknown) {
+        res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+});
+
+// GET /api/knowledge/:id — single chunk with full content
+app.get('/api/knowledge/:id', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const chunk = knowledgeStore.get(req.params['id'] ?? '');
+    if (!chunk || chunk.tenantId !== userId) { res.status(404).json({ error: 'Chunk not found' }); return; }
+    res.json({ ...chunk, embedding: undefined });
+});
+
+// DELETE /api/knowledge/:id
+app.delete('/api/knowledge/:id', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const chunk = knowledgeStore.get(req.params['id'] ?? '');
+    if (!chunk || chunk.tenantId !== userId) { res.status(404).json({ error: 'Chunk not found' }); return; }
+    await knowledgeStore.delete(chunk.id);
+    res.json({ deleted: true });
+});
+
 // ─── Config/info ──────────────────────────────────────────────────────────────
 
 app.get('/api/config', (req, res) => {
@@ -298,6 +356,8 @@ app.get('/api/config', (req, res) => {
         mcpConnected:     mcpServers.filter(s => s.status === 'connected').length,
         authEnabled:      process.env.AUTH_ENABLED === 'true',
         workspaceCount:   workspaceManager.list(userId).length,
+        knowledgeChunks:  knowledgeStore.count(userId),
+        hasEmbeddingKey:  Boolean(process.env.OPENAI_API_KEY),
     });
 });
 
@@ -332,6 +392,10 @@ server.listen(PORT, async () => {
     await workspaceManager.load();
     await workspaceManager.ensureDefaultWorkspace('user_demo', 'Default Workspace');
     console.log(`  Workspaces:  ${workspaceManager.listAll().length} loaded`);
+
+    // Load knowledge store
+    await knowledgeStore.load();
+    console.log(`  Knowledge:   ${knowledgeStore.count()} chunks loaded`);
 });
 
 // Prune old runs every 30 minutes

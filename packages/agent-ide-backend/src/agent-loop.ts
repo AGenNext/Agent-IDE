@@ -3,6 +3,7 @@ import { RunRequest, RunRecord, TraceStepRecord, OAIMessage, OAITool, OAIRespons
 import { runStore } from './run-store';
 import { invokeTool } from './tool-proxy';
 import { broadcast } from './websocket';
+import { ingestText } from './knowledge-store';
 
 // Cost per 1K tokens (input/output) — Anthropic + OpenAI pricing as of 2026-05
 const MODEL_COST: Record<string, { in: number; out: number }> = {
@@ -348,6 +349,15 @@ export async function startAgentRun(req: RunRequest): Promise<string> {
                 estimatedCostUsd: costUsd(req.model, run.totalInputTokens, run.totalOutputTokens),
             });
             broadcast({ type: 'run:completed', runId, payload: runStore.get(runId)! });
+
+            // Long-term agent memory: persist final result as a knowledge chunk
+            const finalStep = run.steps.findLast(s => s.type === 'result');
+            if (finalStep?.content) {
+                const tenantId = req.agentId.startsWith('user_') ? req.agentId : 'user_demo';
+                ingestText(tenantId, `Run: ${req.task.slice(0, 80)}`, String(finalStep.content), `run:${runId}`, {
+                    runId, agentName: req.agentName, model: req.model,
+                }).catch(() => { /* non-blocking */ });
+            }
 
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
