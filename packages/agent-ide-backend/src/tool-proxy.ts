@@ -6,6 +6,7 @@ import { ToolInvokeRequest, ToolInvokeResult } from './types';
 import { policyEngine } from './policy-engine';
 import { approvalGate } from './approval-gate';
 import { auditLog } from './audit-log';
+import { ingestText } from './knowledge-store';
 
 const execFileAsync = promisify(execFile);
 
@@ -151,6 +152,46 @@ const TOOL_HANDLERS: Record<string, (input: Record<string, unknown>) => Promise<
             return { stdout, stderr, exitCode: 0 };
         }
         return { error: `Unsupported language: ${lang}` };
+    },
+
+    // ── Repo Indexer ──────────────────────────────────────────────────────────
+    repo_index: async (input) => {
+        const rel         = String(input['path'] ?? '.');
+        const tenantId    = String(input['tenantId'] ?? 'user_demo');
+        const rawExts     = input['extensions'];
+        const extensions  = Array.isArray(rawExts) ? rawExts.map(String) : ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.md', '.json', '.yaml', '.yml', '.sh'];
+        const maxFileSize = Number(input['maxFileSize'] ?? 100 * 1024); // 100 KB
+        const abs         = safePath(rel);
+
+        const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'lib', '__pycache__', '.next', 'coverage']);
+
+        let fileCount = 0;
+        let chunkCount = 0;
+
+        async function walk(dir: string): Promise<void> {
+            const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+            for (const entry of entries) {
+                const name = String(entry.name);
+                const fullPath = path.join(dir, name);
+                if (entry.isDirectory()) {
+                    if (!SKIP_DIRS.has(name)) await walk(fullPath);
+                } else if (entry.isFile()) {
+                    const ext = path.extname(name).toLowerCase();
+                    if (!extensions.includes(ext)) continue;
+                    const stat = await fs.stat(fullPath).catch(() => null);
+                    if (!stat || stat.size > maxFileSize) continue;
+                    const content = await fs.readFile(fullPath, 'utf-8').catch(() => null);
+                    if (content === null) continue;
+                    const relPath = path.relative(WORKSPACE_ROOT, fullPath);
+                    await ingestText(tenantId, relPath, content, `repo:${rel}`, { filePath: relPath, ext });
+                    fileCount++;
+                    chunkCount += Math.ceil(content.length / 1200);
+                }
+            }
+        }
+
+        await walk(abs);
+        return { indexed: true, path: rel, fileCount, estimatedChunks: chunkCount, extensions };
     },
 };
 

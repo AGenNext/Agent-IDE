@@ -56,6 +56,7 @@ const DEFAULT_SERVERS: McpServerConfig[] = [
     { id: 'brave-search', name: 'brave-search', transport: 'stdio', command: 'npx -y @modelcontextprotocol/server-brave-search', env: { BRAVE_API_KEY: '${BRAVE_API_KEY}' }, autoConnect: false },
     { id: 'postgres',     name: 'postgres',     transport: 'stdio', command: 'npx -y @modelcontextprotocol/server-postgres ${DATABASE_URL}', autoConnect: false },
     { id: 'puppeteer',    name: 'puppeteer',     transport: 'stdio', command: 'npx -y @modelcontextprotocol/server-puppeteer', autoConnect: false },
+    { id: 'github',       name: 'github',        transport: 'stdio', command: 'npx -y @modelcontextprotocol/server-github', env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' }, autoConnect: false },
 ];
 
 class McpManager {

@@ -4,6 +4,7 @@ import { runStore } from './run-store';
 import { invokeTool } from './tool-proxy';
 import { broadcast } from './websocket';
 import { ingestText } from './knowledge-store';
+import { mcpManager } from './mcp-manager';
 
 // Cost per 1K tokens (input/output) — Anthropic + OpenAI pricing as of 2026-05
 const MODEL_COST: Record<string, { in: number; out: number }> = {
@@ -143,8 +144,38 @@ function buildToolSchemas(toolIds: string[]): OAITool[] {
                 },
             },
         },
+        repo_index: {
+            type: 'function',
+            function: {
+                name: 'repo_index',
+                description: 'Walk a local repository directory and ingest all source files into the knowledge store for cheap semantic search. Call this once at the start of a coding task, then use vector_search to find relevant code.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        path:        { type: 'string', description: 'Relative path to the repo root (default ".")' },
+                        extensions:  { type: 'array', items: { type: 'string' }, description: 'File extensions to index (default: .ts .tsx .js .py .go .rs .md)' },
+                        maxFileSize: { type: 'number', description: 'Max file size in bytes to ingest (default 102400)' },
+                    },
+                    required: [],
+                },
+            },
+        },
     };
-    return toolIds.map(id => SCHEMAS[id]).filter(Boolean);
+
+    // Built-in tools requested by the agent config
+    const builtIn = toolIds.map(id => SCHEMAS[id]).filter(Boolean) as OAITool[];
+
+    // MCP tools from all currently connected servers — namespaced as mcp__<serverId>__<toolName>
+    const mcpTools: OAITool[] = mcpManager.getAllTools().map(t => ({
+        type: 'function',
+        function: {
+            name: `mcp__${t.serverId}__${t.name}`,
+            description: `[MCP:${t.serverName}] ${t.description}`,
+            parameters: (t.inputSchema as OAITool['function']['parameters']) ?? { type: 'object', properties: {}, required: [] },
+        },
+    }));
+
+    return [...builtIn, ...mcpTools];
 }
 
 // Determine base URL from model name
@@ -312,7 +343,21 @@ export async function startAgentRun(req: RunRequest): Promise<string> {
                             loopIndex: loopDetect > 1 ? loopIndex : undefined,
                         });
 
-                        const result = await invokeTool({ toolId: tc.function.name, input: toolInput, agentId: req.agentId, runId });
+                        let result: { success: boolean; output?: unknown; error?: string };
+                        if (tc.function.name.startsWith('mcp__')) {
+                            // Route through MCP manager: mcp__<serverId>__<toolName>
+                            const parts = tc.function.name.split('__');
+                            const serverId = parts[1];
+                            const toolName = parts.slice(2).join('__');
+                            try {
+                                const output = await mcpManager.callTool(serverId, toolName, toolInput);
+                                result = { success: true, output };
+                            } catch (err: unknown) {
+                                result = { success: false, error: err instanceof Error ? err.message : String(err) };
+                            }
+                        } else {
+                            result = await invokeTool({ toolId: tc.function.name, input: toolInput, agentId: req.agentId, runId });
+                        }
                         const obsContent = result.success
                             ? JSON.stringify(result.output, null, 2).slice(0, 2000)
                             : `Error: ${result.error}`;
