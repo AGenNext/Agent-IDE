@@ -7,6 +7,8 @@ import { startAgentRun } from './agent-loop';
 import { invokeTool } from './tool-proxy';
 import { runStore } from './run-store';
 import { mcpManager } from './mcp-manager';
+import { workspaceManager } from './workspace-manager';
+import { requireAuth, authenticatePassword, issueToken, extractUser, AuthedRequest } from './auth';
 import { RunRequest, ToolInvokeRequest } from './types';
 
 const app = express();
@@ -22,6 +24,9 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
     console.log(`${new Date().toISOString()} ${req.method} ${req.path}`);
     next();
 });
+
+// Attach tenant user to all requests
+app.use(requireAuth);
 
 // ─── Health ───────────────────────────────────────────────────────────────────
 
@@ -195,20 +200,104 @@ app.post('/api/mcp/tools/:serverId/:toolName/call', async (req: Request, res: Re
     }
 });
 
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+// GET /api/auth/me — current authenticated user
+app.get('/api/auth/me', (req: Request, res: Response) => {
+    const user = (req as AuthedRequest).user;
+    res.json(user);
+});
+
+// POST /api/auth/login — demo password login, returns a JWT
+app.post('/api/auth/login', (req: Request, res: Response) => {
+    const { email, password } = req.body as { email?: string; password?: string };
+    if (!email || !password) { res.status(400).json({ error: 'email and password required' }); return; }
+    const user = authenticatePassword(email, password);
+    if (!user) { res.status(401).json({ error: 'Invalid credentials' }); return; }
+    const token = issueToken(user);
+    res.json({ token, user });
+});
+
+// POST /api/auth/logout — stateless; client discards token
+app.post('/api/auth/logout', (_req, res) => res.json({ ok: true }));
+
+// ─── Workspaces ───────────────────────────────────────────────────────────────
+
+// GET /api/workspaces — list caller's workspaces
+app.get('/api/workspaces', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    res.json(workspaceManager.list(userId));
+});
+
+// POST /api/workspaces — create a workspace for the caller
+app.post('/api/workspaces', async (req: Request, res: Response) => {
+    const { userId, name: userName } = (req as AuthedRequest).user;
+    const { name } = req.body as { name?: string };
+    if (!name) { res.status(400).json({ error: 'name is required' }); return; }
+    const workspace = await workspaceManager.create(userId, name);
+    res.status(201).json(workspace);
+});
+
+// GET /api/workspaces/:id
+app.get('/api/workspaces/:id', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const w = workspaceManager.get(req.params['id'] ?? '');
+    if (!w || w.tenantId !== userId) { res.status(404).json({ error: 'Workspace not found' }); return; }
+    res.json(w);
+});
+
+// PATCH /api/workspaces/:id — rename
+app.patch('/api/workspaces/:id', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const w = workspaceManager.get(req.params['id'] ?? '');
+    if (!w || w.tenantId !== userId) { res.status(404).json({ error: 'Workspace not found' }); return; }
+    const { name } = req.body as { name?: string };
+    if (!name) { res.status(400).json({ error: 'name is required' }); return; }
+    const updated = await workspaceManager.rename(w.id, name);
+    res.json(updated);
+});
+
+// DELETE /api/workspaces/:id
+app.delete('/api/workspaces/:id', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const w = workspaceManager.get(req.params['id'] ?? '');
+    if (!w || w.tenantId !== userId) { res.status(404).json({ error: 'Workspace not found' }); return; }
+    await workspaceManager.delete(w.id);
+    res.json({ deleted: true });
+});
+
+// POST /api/workspaces/:id/activate — mark as active (status field)
+app.post('/api/workspaces/:id/activate', async (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const w = workspaceManager.get(req.params['id'] ?? '');
+    if (!w || w.tenantId !== userId) { res.status(404).json({ error: 'Workspace not found' }); return; }
+    // Deactivate siblings
+    for (const sibling of workspaceManager.list(userId)) {
+        if (sibling.id !== w.id && sibling.status === 'active') {
+            await workspaceManager.setStatus(sibling.id, 'inactive');
+        }
+    }
+    const updated = await workspaceManager.setStatus(w.id, 'active');
+    res.json(updated);
+});
+
 // ─── Config/info ──────────────────────────────────────────────────────────────
 
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', (req, res) => {
     const mcpServers = mcpManager.listServers();
+    const { userId } = (req as AuthedRequest).user;
     res.json({
-        workspaceRoot:   process.env.WORKSPACE_ROOT ?? process.cwd(),
-        allowShell:      process.env.ALLOW_SHELL === 'true',
-        hasBraveKey:     Boolean(process.env.BRAVE_API_KEY),
-        hasOpenAiKey:    Boolean(process.env.OPENAI_API_KEY),
-        hasAnthropicKey: Boolean(process.env.ANTHROPIC_API_KEY),
-        hasDatabaseUrl:  Boolean(process.env.DATABASE_URL),
-        port:            PORT,
-        mcpServerCount:  mcpServers.length,
-        mcpConnected:    mcpServers.filter(s => s.status === 'connected').length,
+        workspaceRoot:    process.env.WORKSPACE_ROOT ?? process.cwd(),
+        allowShell:       process.env.ALLOW_SHELL === 'true',
+        hasBraveKey:      Boolean(process.env.BRAVE_API_KEY),
+        hasOpenAiKey:     Boolean(process.env.OPENAI_API_KEY),
+        hasAnthropicKey:  Boolean(process.env.ANTHROPIC_API_KEY),
+        hasDatabaseUrl:   Boolean(process.env.DATABASE_URL),
+        port:             PORT,
+        mcpServerCount:   mcpServers.length,
+        mcpConnected:     mcpServers.filter(s => s.status === 'connected').length,
+        authEnabled:      process.env.AUTH_ENABLED === 'true',
+        workspaceCount:   workspaceManager.list(userId).length,
     });
 });
 
@@ -238,6 +327,11 @@ server.listen(PORT, async () => {
     await mcpManager.loadConfig();
     const mcpServers = mcpManager.listServers();
     console.log(`  MCP servers: ${mcpServers.length} configured`);
+
+    // Load workspace store and seed demo workspace
+    await workspaceManager.load();
+    await workspaceManager.ensureDefaultWorkspace('user_demo', 'Default Workspace');
+    console.log(`  Workspaces:  ${workspaceManager.listAll().length} loaded`);
 });
 
 // Prune old runs every 30 minutes

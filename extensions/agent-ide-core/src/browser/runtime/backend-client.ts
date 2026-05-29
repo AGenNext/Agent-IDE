@@ -116,6 +116,85 @@ export async function cancelRun(runId: string): Promise<void> {
     await apiFetch<unknown>(`/api/runs/${runId}`, { method: 'DELETE' });
 }
 
+// ─── Auth API ─────────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+    userId: string;
+    email:  string;
+    name:   string;
+}
+
+export interface LoginResult {
+    token: string;
+    user:  AuthUser;
+}
+
+export async function login(email: string, password: string): Promise<LoginResult> {
+    return apiFetch<LoginResult>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+    });
+}
+
+export async function getMe(token?: string): Promise<AuthUser> {
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return apiFetch<AuthUser>('/api/auth/me', { headers });
+}
+
+// ─── Workspaces API ───────────────────────────────────────────────────────────
+
+export type WorkspaceStatus = 'active' | 'inactive' | 'provisioning' | 'error';
+
+export interface WorkspaceRecord {
+    id:         string;
+    tenantId:   string;
+    name:       string;
+    status:     WorkspaceStatus;
+    createdAt:  string;
+    updatedAt:  string;
+    rootPath?:  string;
+}
+
+function authHeaders(token?: string): Record<string, string> {
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function listWorkspaces(token?: string): Promise<WorkspaceRecord[]> {
+    return apiFetch<WorkspaceRecord[]>('/api/workspaces', { headers: authHeaders(token) });
+}
+
+export async function createWorkspace(name: string, token?: string): Promise<WorkspaceRecord> {
+    return apiFetch<WorkspaceRecord>('/api/workspaces', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+        headers: authHeaders(token),
+    });
+}
+
+export async function renameWorkspace(id: string, name: string, token?: string): Promise<WorkspaceRecord> {
+    return apiFetch<WorkspaceRecord>(`/api/workspaces/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+        headers: authHeaders(token),
+    });
+}
+
+export async function deleteWorkspace(id: string, token?: string): Promise<void> {
+    await apiFetch<unknown>(`/api/workspaces/${id}`, {
+        method: 'DELETE',
+        headers: authHeaders(token),
+    });
+}
+
+export async function activateWorkspace(id: string, token?: string): Promise<WorkspaceRecord> {
+    return apiFetch<WorkspaceRecord>(`/api/workspaces/${id}/activate`, {
+        method: 'POST',
+        body: '{}',
+        headers: authHeaders(token),
+    });
+}
+
 // ─── MCP API ──────────────────────────────────────────────────────────────────
 
 export async function listMcpServers(): Promise<McpServerState[]> {

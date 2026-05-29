@@ -53,12 +53,19 @@
 - [ ] MCP server configuration persistence (`.mcp.json` in workspace)
 - [ ] Tool schema discovery from live MCP servers
 
-## Phase 5 — Authentication & Workspaces
+## Phase 5 — Authentication & Workspaces ✅ (initial)
 
-- [ ] Clerk/Auth0 authentication integration
-- [ ] Per-user workspace provisioning (isolated Docker containers)
-- [ ] Workspace API (REST) for workspace CRUD
-- [ ] Session persistence across browser restarts
+- [x] JWT auth middleware (`auth.ts`) — HMAC-SHA256 tokens, demo password login, `AUTH_ENABLED` flag
+- [x] `requireAuth` middleware attached to all routes — threads `req.user` (tenantId) through every handler
+- [x] `workspace-manager.ts` — tenant-scoped workspace CRUD with `.workspaces.json` persistence
+- [x] Workspace REST API: create, list, get, rename (PATCH), delete, activate (switch active workspace)
+- [x] `/api/auth/me`, `/api/auth/login`, `/api/auth/logout` endpoints
+- [x] `session-store.ts` — localStorage session persistence (token + userId + activeWorkspaceId)
+- [x] `backend-client.ts` — auth and workspace API methods (login, getMe, CRUD, activate)
+- [x] **Workspaces panel** (15th panel) — Account tab (avatar, user info, sign in/out) + Workspaces tab (list, create, rename, activate, delete)
+- [ ] Clerk/Auth0 integration (set CLERK_PUBLISHABLE_KEY or AUTH0_DOMAIN to enable)
+- [ ] Per-user workspace provisioning via isolated Docker containers
+- [ ] Tenant-scoped MCP server configs (per-workspace `.mcp.json`)
 
 ## Phase 6 — Knowledge & Memory
 

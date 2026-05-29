@@ -18,6 +18,7 @@ import { ResearchPanelWidget, ResearchPanelContribution } from './panels/researc
 import { BenchPanelWidget, BenchPanelContribution } from './panels/bench-panel-widget';
 import { OptimizePanelWidget, OptimizePanelContribution } from './panels/optimize-panel-widget';
 import { McpPanelWidget, McpPanelContribution } from './panels/mcp-panel-widget';
+import { WorkspacesPanelWidget, WorkspacesPanelContribution } from './panels/workspaces-panel-widget';
 
 function bindPanel<W, C>(bind: Function, Widget: any, Contribution: any): void {
     bindViewContribution(bind, Contribution);
@@ -45,7 +46,8 @@ export default new ContainerModule(bind => {
     bindPanel(bind, TasksPanelWidget,     TasksPanelContribution);
     bindPanel(bind, KnowledgePanelWidget, KnowledgePanelContribution);
     bindPanel(bind, ArtifactsPanelWidget, ArtifactsPanelContribution);
-    bindPanel(bind, McpPanelWidget,       McpPanelContribution);
+    bindPanel(bind, McpPanelWidget,        McpPanelContribution);
+    bindPanel(bind, WorkspacesPanelWidget, WorkspacesPanelContribution);
 
     // Bottom panels
     bindPanel(bind, RunsPanelWidget,   RunsPanelContribution);
@@ -61,7 +63,4 @@ export default new ContainerModule(bind => {
     bindPanel(bind, ResearchPanelWidget, ResearchPanelContribution);
     bindPanel(bind, BenchPanelWidget,    BenchPanelContribution);
 
-    // TODO: auth service binding (Phase 4)
-    // TODO: OpenAI/Anthropic live runtime binding (Phase 2)
-    // TODO: MCP gateway service binding (Phase 3)
 });
