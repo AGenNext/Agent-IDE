@@ -6,6 +6,7 @@ import { attachWebSocket } from './websocket';
 import { startAgentRun } from './agent-loop';
 import { invokeTool } from './tool-proxy';
 import { runStore } from './run-store';
+import { mcpManager } from './mcp-manager';
 import { RunRequest, ToolInvokeRequest } from './types';
 
 const app = express();
@@ -124,17 +125,90 @@ app.post('/api/tools/:id/invoke', async (req: Request, res: Response) => {
     res.status(result.success ? 200 : 500).json(result);
 });
 
+// ─── MCP servers ─────────────────────────────────────────────────────────────
+
+// GET /api/mcp/servers — list configured servers with live status
+app.get('/api/mcp/servers', (_req, res) => {
+    res.json(mcpManager.listServers());
+});
+
+// GET /api/mcp/servers/:id — single server state
+app.get('/api/mcp/servers/:id', (req: Request, res: Response) => {
+    const s = mcpManager.getServer(req.params['id'] ?? '');
+    if (!s) { res.status(404).json({ error: 'Server not found' }); return; }
+    res.json(s);
+});
+
+// POST /api/mcp/servers — add / upsert a server config
+app.post('/api/mcp/servers', async (req: Request, res: Response) => {
+    const body = req.body as { id?: string; name?: string; transport?: string; command?: string; endpoint?: string; env?: Record<string, string> };
+    if (!body.id || !body.name || !body.transport) {
+        res.status(400).json({ error: 'id, name, and transport are required' }); return;
+    }
+    await mcpManager.addServer({
+        id: body.id, name: body.name,
+        transport: body.transport as 'stdio' | 'sse' | 'websocket',
+        command: body.command, endpoint: body.endpoint,
+        env: body.env ?? {},
+    });
+    res.status(201).json(mcpManager.getServer(body.id));
+});
+
+// DELETE /api/mcp/servers/:id — remove server and disconnect
+app.delete('/api/mcp/servers/:id', async (req: Request, res: Response) => {
+    await mcpManager.removeServer(req.params['id'] ?? '');
+    res.json({ removed: true });
+});
+
+// POST /api/mcp/servers/:id/connect — connect to an MCP server
+app.post('/api/mcp/servers/:id/connect', async (req: Request, res: Response) => {
+    try {
+        const state = await mcpManager.connect(req.params['id'] ?? '');
+        res.json(state);
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ error: msg });
+    }
+});
+
+// POST /api/mcp/servers/:id/disconnect — disconnect from an MCP server
+app.post('/api/mcp/servers/:id/disconnect', async (req: Request, res: Response) => {
+    await mcpManager.disconnect(req.params['id'] ?? '');
+    res.json({ disconnected: true });
+});
+
+// GET /api/mcp/tools — all tools from all connected MCP servers
+app.get('/api/mcp/tools', (_req, res) => {
+    res.json(mcpManager.getAllTools());
+});
+
+// POST /api/mcp/tools/:serverId/:toolName/call — call a tool on a connected server
+app.post('/api/mcp/tools/:serverId/:toolName/call', async (req: Request, res: Response) => {
+    const { serverId = '', toolName = '' } = req.params;
+    const args = (req.body as { args?: Record<string, unknown> }).args ?? req.body as Record<string, unknown>;
+    try {
+        const result = await mcpManager.callTool(serverId, toolName, args);
+        res.json({ success: true, result });
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ success: false, error: msg });
+    }
+});
+
 // ─── Config/info ──────────────────────────────────────────────────────────────
 
 app.get('/api/config', (_req, res) => {
+    const mcpServers = mcpManager.listServers();
     res.json({
-        workspaceRoot: process.env.WORKSPACE_ROOT ?? process.cwd(),
-        allowShell:    process.env.ALLOW_SHELL === 'true',
-        hasBraveKey:   Boolean(process.env.BRAVE_API_KEY),
-        hasOpenAiKey:  Boolean(process.env.OPENAI_API_KEY),
+        workspaceRoot:   process.env.WORKSPACE_ROOT ?? process.cwd(),
+        allowShell:      process.env.ALLOW_SHELL === 'true',
+        hasBraveKey:     Boolean(process.env.BRAVE_API_KEY),
+        hasOpenAiKey:    Boolean(process.env.OPENAI_API_KEY),
         hasAnthropicKey: Boolean(process.env.ANTHROPIC_API_KEY),
-        hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
-        port: PORT,
+        hasDatabaseUrl:  Boolean(process.env.DATABASE_URL),
+        port:            PORT,
+        mcpServerCount:  mcpServers.length,
+        mcpConnected:    mcpServers.filter(s => s.status === 'connected').length,
     });
 });
 
@@ -149,15 +223,21 @@ app.use((_req: Request, res: Response) => {
 const server = http.createServer(app);
 attachWebSocket(server);
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
     console.log(`Agent IDE backend listening on port ${PORT}`);
-    console.log(`  WebSocket: ws://localhost:${PORT}/ws`);
-    console.log(`  Health:    http://localhost:${PORT}/health`);
-    console.log(`  Runs API:  http://localhost:${PORT}/api/runs`);
-    console.log(`  Tools API: http://localhost:${PORT}/api/tools`);
+    console.log(`  WebSocket:  ws://localhost:${PORT}/ws`);
+    console.log(`  Health:     http://localhost:${PORT}/health`);
+    console.log(`  Runs API:   http://localhost:${PORT}/api/runs`);
+    console.log(`  Tools API:  http://localhost:${PORT}/api/tools`);
+    console.log(`  MCP API:    http://localhost:${PORT}/api/mcp/servers`);
     const apiKeySet = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-    console.log(`  Live LLM:  ${apiKeySet ? 'enabled' : 'offline/demo mode (no API key)'}`);
-    console.log(`  Shell:     ${process.env.ALLOW_SHELL === 'true' ? 'enabled' : 'disabled'}`);
+    console.log(`  Live LLM:   ${apiKeySet ? 'enabled' : 'offline/demo mode (no API key)'}`);
+    console.log(`  Shell:      ${process.env.ALLOW_SHELL === 'true' ? 'enabled' : 'disabled'}`);
+
+    // Load MCP server configs (reads .mcp.json, writes defaults if absent)
+    await mcpManager.loadConfig();
+    const mcpServers = mcpManager.listServers();
+    console.log(`  MCP servers: ${mcpServers.length} configured`);
 });
 
 // Prune old runs every 30 minutes

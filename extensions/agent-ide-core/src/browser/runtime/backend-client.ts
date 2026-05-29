@@ -43,6 +43,33 @@ export interface BackendConfig {
     hasAnthropicKey: boolean;
     hasDatabaseUrl:  boolean;
     port:            number;
+    mcpServerCount:  number;
+    mcpConnected:    number;
+}
+
+export type McpTransport = 'stdio' | 'sse' | 'websocket';
+export type McpStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
+
+export interface McpServerState {
+    id:           string;
+    name:         string;
+    transport:    McpTransport;
+    command?:     string;
+    endpoint?:    string;
+    status:       McpStatus;
+    tools:        McpToolDef[];
+    toolCount:    number;
+    error?:       string;
+    connectedAt?: string;
+    autoConnect?: boolean;
+}
+
+export interface McpToolDef {
+    serverId:    string;
+    serverName:  string;
+    name:        string;
+    description: string;
+    inputSchema: Record<string, unknown>;
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -87,6 +114,40 @@ export async function getRun(runId: string): Promise<unknown> {
 
 export async function cancelRun(runId: string): Promise<void> {
     await apiFetch<unknown>(`/api/runs/${runId}`, { method: 'DELETE' });
+}
+
+// ─── MCP API ──────────────────────────────────────────────────────────────────
+
+export async function listMcpServers(): Promise<McpServerState[]> {
+    return apiFetch<McpServerState[]>('/api/mcp/servers');
+}
+
+export async function getMcpServer(id: string): Promise<McpServerState> {
+    return apiFetch<McpServerState>(`/api/mcp/servers/${id}`);
+}
+
+export async function addMcpServer(cfg: { id: string; name: string; transport: McpTransport; command?: string; endpoint?: string; env?: Record<string, string> }): Promise<McpServerState> {
+    return apiFetch<McpServerState>('/api/mcp/servers', { method: 'POST', body: JSON.stringify(cfg) });
+}
+
+export async function removeMcpServer(id: string): Promise<void> {
+    await apiFetch<unknown>(`/api/mcp/servers/${id}`, { method: 'DELETE' });
+}
+
+export async function connectMcpServer(id: string): Promise<McpServerState> {
+    return apiFetch<McpServerState>(`/api/mcp/servers/${id}/connect`, { method: 'POST', body: '{}' });
+}
+
+export async function disconnectMcpServer(id: string): Promise<void> {
+    await apiFetch<unknown>(`/api/mcp/servers/${id}/disconnect`, { method: 'POST', body: '{}' });
+}
+
+export async function listMcpTools(): Promise<McpToolDef[]> {
+    return apiFetch<McpToolDef[]>('/api/mcp/tools');
+}
+
+export async function callMcpTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+    return apiFetch<unknown>(`/api/mcp/tools/${serverId}/${toolName}/call`, { method: 'POST', body: JSON.stringify({ args }) });
 }
 
 /**

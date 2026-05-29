@@ -4,6 +4,7 @@ import { ReactWidget, AbstractViewContribution } from '@theia/core/lib/browser';
 import { CommandRegistry } from '@theia/core/lib/common';
 import { McpPanelCommand } from '../agent-ide-commands';
 import { getAllTools, getToolsByCategory, ToolDefinition, ToolCategory } from '../runtime/tool-registry';
+import { isBackendReachable, listMcpServers, connectMcpServer, disconnectMcpServer, addMcpServer, removeMcpServer, McpServerState, McpTransport } from '../runtime/backend-client';
 
 type McpTab = 'tools' | 'servers' | 'logs';
 
@@ -19,16 +20,28 @@ interface McpServer {
     endpoint: string;
     status: ServerStatus;
     toolCount: number;
-    lastSeen?: string;
+    connectedAt?: string;
     error?: string;
 }
 
+function stateToServer(s: McpServerState): McpServer {
+    return {
+        id: s.id,
+        name: s.name,
+        transport: s.transport as Transport,
+        endpoint: s.command ?? s.endpoint ?? '',
+        status: s.status as ServerStatus,
+        toolCount: s.toolCount,
+        connectedAt: s.connectedAt,
+        error: s.error,
+    };
+}
+
 const DEMO_SERVERS: McpServer[] = [
-    { id: 's1', name: 'filesystem',      transport: 'stdio',     endpoint: 'npx @modelcontextprotocol/server-filesystem /workspace', status: 'connected',    toolCount: 4, lastSeen: '14:28:01' },
-    { id: 's2', name: 'brave-search',    transport: 'stdio',     endpoint: 'npx @modelcontextprotocol/server-brave-search',           status: 'connected',    toolCount: 1, lastSeen: '14:28:00' },
-    { id: 's3', name: 'postgres',        transport: 'stdio',     endpoint: 'npx @modelcontextprotocol/server-postgres $DATABASE_URL', status: 'disconnected', toolCount: 3 },
-    { id: 's4', name: 'puppeteer',       transport: 'stdio',     endpoint: 'npx @modelcontextprotocol/server-puppeteer',              status: 'error',        toolCount: 0, error: 'Chrome not found' },
-    { id: 's5', name: 'agent-ide-local', transport: 'websocket', endpoint: 'ws://localhost:3001/mcp',                                 status: 'disconnected', toolCount: 8 },
+    { id: 'filesystem',   name: 'filesystem',      transport: 'stdio',     endpoint: 'npx @modelcontextprotocol/server-filesystem .', status: 'disconnected', toolCount: 0 },
+    { id: 'brave-search', name: 'brave-search',    transport: 'stdio',     endpoint: 'npx @modelcontextprotocol/server-brave-search', status: 'disconnected', toolCount: 0 },
+    { id: 'postgres',     name: 'postgres',        transport: 'stdio',     endpoint: 'npx @modelcontextprotocol/server-postgres',     status: 'disconnected', toolCount: 0 },
+    { id: 'puppeteer',    name: 'puppeteer',        transport: 'stdio',     endpoint: 'npx @modelcontextprotocol/server-puppeteer',    status: 'disconnected', toolCount: 0 },
 ];
 
 // ─── Invocation log ──────────────────────────────────────────────────────────
@@ -217,16 +230,27 @@ const TRANSPORT_COLORS: Record<Transport, string> = {
     websocket: '#40c0a0',
 };
 
-function ServerCard({ server }: { server: McpServer }) {
-    const [status, setStatus] = React.useState<ServerStatus>(server.status);
-    const m = STATUS_META[status];
+function ServerCard({ server, liveBackend, onStatusChange }: { server: McpServer; liveBackend: boolean; onStatusChange: (id: string, status: ServerStatus, toolCount?: number, error?: string) => void }) {
+    const m = STATUS_META[server.status];
 
-    function toggle() {
-        if (status === 'connected') {
-            setStatus('disconnected');
-        } else if (status === 'disconnected' || status === 'error') {
-            setStatus('connecting');
-            setTimeout(() => setStatus('connected'), 1200);
+    async function toggle() {
+        if (server.status === 'connected') {
+            onStatusChange(server.id, 'disconnected');
+            if (liveBackend) {
+                try { await disconnectMcpServer(server.id); } catch { /* ignore */ }
+            }
+        } else if (server.status === 'disconnected' || server.status === 'error') {
+            onStatusChange(server.id, 'connecting');
+            if (liveBackend) {
+                try {
+                    const state = await connectMcpServer(server.id);
+                    onStatusChange(server.id, state.status as ServerStatus, state.toolCount, state.error);
+                } catch (e) {
+                    onStatusChange(server.id, 'error', 0, String(e));
+                }
+            } else {
+                setTimeout(() => onStatusChange(server.id, 'connected', 0), 1200);
+            }
         }
     }
 
@@ -240,16 +264,17 @@ function ServerCard({ server }: { server: McpServer }) {
             </div>
             <div style={{ fontSize: 10, color: '#555', fontFamily: 'monospace', marginBottom: 6, wordBreak: 'break-all' }}>{server.endpoint}</div>
             {server.error && <div style={{ fontSize: 11, color: '#c04040', marginBottom: 6 }}>{server.error}</div>}
-            {server.lastSeen && <div style={{ fontSize: 10, color: '#555', marginBottom: 6 }}>last seen: {server.lastSeen}</div>}
+            {server.connectedAt && <div style={{ fontSize: 10, color: '#555', marginBottom: 6 }}>connected: {new Date(server.connectedAt).toLocaleTimeString()}</div>}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button onClick={toggle}
+                <button onClick={toggle} disabled={server.status === 'connecting'}
                     style={{
-                        padding: '4px 12px', fontSize: 11, borderRadius: 3, cursor: 'pointer', fontWeight: 600,
-                        background: status === 'connected' ? '#1a0a0a' : '#0a1a0a',
-                        border: `1px solid ${status === 'connected' ? '#7a3a3a' : '#3a7a3a'}`,
-                        color: status === 'connected' ? '#d06060' : '#60d060',
+                        padding: '4px 12px', fontSize: 11, borderRadius: 3,
+                        cursor: server.status === 'connecting' ? 'default' : 'pointer', fontWeight: 600,
+                        background: server.status === 'connected' ? '#1a0a0a' : '#0a1a0a',
+                        border: `1px solid ${server.status === 'connected' ? '#7a3a3a' : '#3a7a3a'}`,
+                        color: server.status === 'connected' ? '#d06060' : server.status === 'connecting' ? '#888' : '#60d060',
                     }}>
-                    {status === 'connected' ? 'Disconnect' : status === 'connecting' ? 'Connecting…' : 'Connect'}
+                    {server.status === 'connected' ? 'Disconnect' : server.status === 'connecting' ? 'Connecting…' : 'Connect'}
                 </button>
                 <span style={{ fontSize: 11, color: m.color }}>{m.label}</span>
             </div>
@@ -257,23 +282,131 @@ function ServerCard({ server }: { server: McpServer }) {
     );
 }
 
+interface AddServerForm {
+    id: string;
+    name: string;
+    transport: McpTransport;
+    command: string;
+}
+
+function AddServerModal({ onAdd, onClose }: { onAdd: (form: AddServerForm) => Promise<void>; onClose: () => void }) {
+    const [form, setForm] = React.useState<AddServerForm>({ id: '', name: '', transport: 'stdio', command: '' });
+    const [saving, setSaving] = React.useState(false);
+    const [err, setErr] = React.useState('');
+
+    async function submit(e: React.FormEvent) {
+        e.preventDefault();
+        if (!form.id || !form.name || !form.command) { setErr('All fields are required'); return; }
+        setSaving(true);
+        try { await onAdd(form); onClose(); }
+        catch (ex) { setErr(String(ex)); }
+        finally { setSaving(false); }
+    }
+
+    const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', background: '#111', border: '1px solid #333', color: '#ddd', borderRadius: 3, padding: '5px 8px', fontSize: 11, outline: 'none' };
+
+    return (
+        <div style={{ position: 'fixed', inset: 0, background: '#000a', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ background: '#111', border: '1px solid #333', borderRadius: 8, padding: 20, width: 380, boxShadow: '0 8px 32px #0008' }}>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#7ab4ff' }}>Add MCP Server</span>
+                    <button onClick={onClose} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 16 }}>×</button>
+                </div>
+                <form onSubmit={submit}>
+                    {[['id', 'Server ID (unique slug)'], ['name', 'Display name'], ['command', 'Shell command']] .map(([field, label]) => (
+                        <div key={field} style={{ marginBottom: 10 }}>
+                            <div style={{ fontSize: 10, color: '#777', marginBottom: 3 }}>{label}</div>
+                            <input style={inputStyle} value={(form as Record<string, string>)[field]} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} />
+                        </div>
+                    ))}
+                    <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 10, color: '#777', marginBottom: 3 }}>Transport</div>
+                        <select value={form.transport} onChange={e => setForm(f => ({ ...f, transport: e.target.value as McpTransport }))}
+                            style={{ ...inputStyle, cursor: 'pointer' }}>
+                            <option value="stdio">stdio</option>
+                            <option value="sse">SSE</option>
+                            <option value="websocket">WebSocket</option>
+                        </select>
+                    </div>
+                    {err && <div style={{ fontSize: 11, color: '#c04040', marginBottom: 8 }}>{err}</div>}
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button type="button" onClick={onClose} style={{ padding: '6px 14px', background: 'none', border: '1px solid #333', color: '#888', borderRadius: 3, cursor: 'pointer', fontSize: 11 }}>Cancel</button>
+                        <button type="submit" disabled={saving} style={{ padding: '6px 14px', background: '#0a1a0a', border: '1px solid #3a7a3a', color: saving ? '#555' : '#60d060', borderRadius: 3, cursor: saving ? 'default' : 'pointer', fontSize: 11, fontWeight: 700 }}>
+                            {saving ? 'Adding…' : 'Add Server'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 function ServersTab() {
-    const [servers] = React.useState(DEMO_SERVERS);
+    const [servers, setServers] = React.useState<McpServer[]>(DEMO_SERVERS);
+    const [liveBackend, setLiveBackend] = React.useState(false);
+    const [loading, setLoading] = React.useState(true);
+    const [showAdd, setShowAdd] = React.useState(false);
+
+    React.useEffect(() => {
+        (async () => {
+            const reachable = await isBackendReachable();
+            setLiveBackend(reachable);
+            if (reachable) {
+                try {
+                    const live = await listMcpServers();
+                    setServers(live.map(stateToServer));
+                } catch { /* stay with demo */ }
+            }
+            setLoading(false);
+        })();
+    }, []);
+
+    function handleStatusChange(id: string, status: ServerStatus, toolCount?: number, error?: string) {
+        setServers(prev => prev.map(s => s.id === id ? { ...s, status, toolCount: toolCount ?? s.toolCount, error } : s));
+    }
+
+    async function handleAdd(form: AddServerForm) {
+        const state = await addMcpServer({ id: form.id, name: form.name, transport: form.transport, command: form.command });
+        setServers(prev => [...prev, stateToServer(state)]);
+    }
+
+    async function handleRemove(id: string) {
+        if (liveBackend) await removeMcpServer(id);
+        setServers(prev => prev.filter(s => s.id !== id));
+    }
+
     const connected = servers.filter(s => s.status === 'connected').length;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-            <div style={{ padding: '8px 12px', borderBottom: '1px solid #1a1a1a', fontSize: 11, color: '#555', background: '#0d0d0d' }}>
-                {connected} of {servers.length} servers connected · {servers.reduce((s, x) => s + x.toolCount, 0)} tools total
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid #1a1a1a', fontSize: 11, background: '#0d0d0d', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: '#555' }}>
+                    {loading ? 'Loading…' : `${connected} of ${servers.length} connected · ${servers.reduce((a, s) => a + s.toolCount, 0)} tools`}
+                </span>
+                {liveBackend
+                    ? <span style={{ fontSize: 10, color: '#40a040', marginLeft: 'auto' }}>● live backend</span>
+                    : <span style={{ fontSize: 10, color: '#555', marginLeft: 'auto' }}>○ demo mode</span>}
             </div>
             <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
-                {servers.map(s => <ServerCard key={s.id} server={s} />)}
+                {servers.map(s => (
+                    <div key={s.id} style={{ position: 'relative' }}>
+                        <ServerCard server={s} liveBackend={liveBackend} onStatusChange={handleStatusChange} />
+                        {liveBackend && (
+                            <button onClick={() => handleRemove(s.id)}
+                                title="Remove server"
+                                style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', color: '#444', cursor: 'pointer', fontSize: 12, padding: '0 4px' }}>
+                                ✕
+                            </button>
+                        )}
+                    </div>
+                ))}
                 <div style={{ marginTop: 8, padding: '8px 0', borderTop: '1px solid #1a1a1a' }}>
-                    <button style={{ padding: '6px 14px', background: '#111', border: '1px solid #333', color: '#888', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>
+                    <button onClick={() => setShowAdd(true)} style={{ padding: '6px 14px', background: '#111', border: '1px solid #333', color: '#888', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>
                         + Add MCP Server
                     </button>
                 </div>
             </div>
+            {showAdd && <AddServerModal onAdd={handleAdd} onClose={() => setShowAdd(false)} />}
         </div>
     );
 }
@@ -325,21 +458,19 @@ function McpView() {
     const [tab, setTab] = React.useState<McpTab>('tools');
     const allTools = getAllTools();
 
+    const tabBtn = (t: McpTab, label: string) => (
+        <button onClick={() => setTab(t)}
+            style={{ padding: '8px 14px', background: 'none', border: 'none', borderBottom: tab === t ? '2px solid #7ab4ff' : '2px solid transparent', color: tab === t ? '#7ab4ff' : '#666', cursor: 'pointer', fontSize: 12, fontWeight: tab === t ? 700 : 400 }}>
+            {label}
+        </button>
+    );
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#0a0a0a', color: '#d0d0d0', fontFamily: 'var(--theia-font-family, monospace)' }}>
             <div style={{ display: 'flex', borderBottom: '1px solid #1e1e1e', background: '#0f0f0f' }}>
-                <button onClick={() => setTab('tools')}
-                    style={{ padding: '8px 14px', background: 'none', border: 'none', borderBottom: tab === 'tools' ? '2px solid #7ab4ff' : '2px solid transparent', color: tab === 'tools' ? '#7ab4ff' : '#666', cursor: 'pointer', fontSize: 12, fontWeight: tab === 'tools' ? 700 : 400 }}>
-                    Tools ({allTools.length})
-                </button>
-                <button onClick={() => setTab('servers')}
-                    style={{ padding: '8px 14px', background: 'none', border: 'none', borderBottom: tab === 'servers' ? '2px solid #7ab4ff' : '2px solid transparent', color: tab === 'servers' ? '#7ab4ff' : '#666', cursor: 'pointer', fontSize: 12, fontWeight: tab === 'servers' ? 700 : 400 }}>
-                    MCP Servers ({DEMO_SERVERS.length})
-                </button>
-                <button onClick={() => setTab('logs')}
-                    style={{ padding: '8px 14px', background: 'none', border: 'none', borderBottom: tab === 'logs' ? '2px solid #7ab4ff' : '2px solid transparent', color: tab === 'logs' ? '#7ab4ff' : '#666', cursor: 'pointer', fontSize: 12, fontWeight: tab === 'logs' ? 700 : 400 }}>
-                    Logs ({INITIAL_LOGS.length})
-                </button>
+                {tabBtn('tools', `Tools (${allTools.length})`)}
+                {tabBtn('servers', 'MCP Servers')}
+                {tabBtn('logs', `Logs (${INITIAL_LOGS.length})`)}
             </div>
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 {tab === 'tools'   && <ToolsTab />}
