@@ -1,0 +1,11 @@
+{
+  "name": "browser-app",
+  "private": true,
+  "dependencies": {
+    "@theia/core": "latest"
+  },
+  "scripts": {
+    "start": "theia start",
+    "build": "echo build"
+  }
+}
