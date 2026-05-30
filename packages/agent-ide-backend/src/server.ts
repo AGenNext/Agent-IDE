@@ -14,6 +14,9 @@ import { policyEngine } from './policy-engine';
 import { auditLog } from './audit-log';
 import { approvalGate } from './approval-gate';
 import { RunRequest, ToolInvokeRequest } from './types';
+import { identityStore } from './identity-store';
+import { orgManager } from './org-manager';
+import { startOrchestration, getOrchestrationRun, listOrchestrationRuns } from './orchestrator';
 
 const app = express();
 const PORT = Number(process.env.PORT ?? 3001);
@@ -31,6 +34,16 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 
 // Attach tenant user to all requests
 app.use(requireAuth);
+
+// API key auth override — Bearer aik_… tokens use identityStore
+app.use((req: Request, _res: Response, next: NextFunction) => {
+    const header = req.headers.authorization;
+    if (header?.startsWith('Bearer aik_')) {
+        const user = identityStore.authenticateApiKey(header.slice(7));
+        if (user) (req as AuthedRequest).user = { userId: user.userId, email: user.email, name: user.name };
+    }
+    next();
+});
 
 // ─── Health ───────────────────────────────────────────────────────────────────
 
@@ -432,6 +445,201 @@ app.get('/api/config', (req, res) => {
     });
 });
 
+// ─── Identity & lifecycle ──────────────────────────────────────────────────────
+
+// POST /api/identity/register — create a new user account
+app.post('/api/identity/register', (req: Request, res: Response) => {
+    const { email, name, password, role } = req.body as { email?: string; name?: string; password?: string; role?: string };
+    if (!email || !name || !password) { res.status(400).json({ error: 'email, name, and password are required' }); return; }
+    try {
+        const user = identityStore.createUser(email, name, password, (role as 'admin' | 'developer' | 'viewer') ?? 'developer');
+        const { passwordHash: _, ...safe } = user;
+        res.status(201).json(safe);
+    } catch (err: unknown) {
+        res.status(409).json({ error: err instanceof Error ? err.message : 'Registration failed' });
+    }
+});
+
+// GET /api/identity/me — current user profile (from identity store)
+app.get('/api/identity/me', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const user = identityStore.getUser(userId);
+    if (!user) { res.json({ userId, email: (req as AuthedRequest).user.email, name: (req as AuthedRequest).user.name, role: 'developer', mfaEnabled: false, status: 'active' }); return; }
+    const { passwordHash: _, ...safe } = user;
+    res.json(safe);
+});
+
+// PUT /api/identity/me — update profile
+app.put('/api/identity/me', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const patch = req.body as { name?: string; avatarUrl?: string; mfaEnabled?: boolean };
+    const updated = identityStore.updateUser(userId, patch);
+    if (!updated) { res.status(404).json({ error: 'User not found in identity store' }); return; }
+    const { passwordHash: _, ...safe } = updated;
+    res.json(safe);
+});
+
+// PUT /api/identity/me/password — change password
+app.put('/api/identity/me/password', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const { password } = req.body as { password?: string };
+    if (!password || password.length < 8) { res.status(400).json({ error: 'Password must be at least 8 characters' }); return; }
+    identityStore.changePassword(userId, password);
+    res.json({ ok: true });
+});
+
+// GET /api/identity/users — list all users (admin only)
+app.get('/api/identity/users', (req: Request, res: Response) => {
+    const user = identityStore.getUser((req as AuthedRequest).user.userId);
+    if (user?.role !== 'admin') { res.status(403).json({ error: 'Admin only' }); return; }
+    res.json(identityStore.listUsers().map(u => { const { passwordHash: _, ...safe } = u; return safe; }));
+});
+
+// ─── Agent Identities ─────────────────────────────────────────────────────────
+
+app.get('/api/identity/agents', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    res.json(identityStore.listAgents(userId));
+});
+
+app.post('/api/identity/agents', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const { name, description = '', model = 'claude-sonnet-4-6', capabilities = [], orgId } = req.body as { name?: string; description?: string; model?: string; capabilities?: string[]; orgId?: string };
+    if (!name) { res.status(400).json({ error: 'name is required' }); return; }
+    const agent = identityStore.createAgent({ name, description, ownerId: userId, model, status: 'active', capabilities, orgId });
+    res.status(201).json(agent);
+});
+
+app.put('/api/identity/agents/:id', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const agent = identityStore.getAgent(req.params['id'] ?? '');
+    if (!agent || agent.ownerId !== userId) { res.status(404).json({ error: 'Agent not found' }); return; }
+    const updated = identityStore.updateAgent(agent.id, req.body as never);
+    res.json(updated);
+});
+
+app.delete('/api/identity/agents/:id', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const agent = identityStore.getAgent(req.params['id'] ?? '');
+    if (!agent || agent.ownerId !== userId) { res.status(404).json({ error: 'Agent not found' }); return; }
+    identityStore.deleteAgent(agent.id);
+    res.json({ deleted: true });
+});
+
+// ─── API Keys ─────────────────────────────────────────────────────────────────
+
+app.get('/api/identity/api-keys', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    res.json(identityStore.listApiKeys(userId).map(k => ({ ...k, keyHash: undefined })));
+});
+
+app.post('/api/identity/api-keys', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const { name, scopes = ['runs:write', 'tools:invoke'], agentId, expiresAt } = req.body as { name?: string; scopes?: string[]; agentId?: string; expiresAt?: string };
+    if (!name) { res.status(400).json({ error: 'name is required' }); return; }
+    const { key, raw } = identityStore.createApiKey(userId, name, scopes, agentId, expiresAt);
+    res.status(201).json({ ...key, keyHash: undefined, raw }); // raw shown once only
+});
+
+app.delete('/api/identity/api-keys/:id', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const ok = identityStore.revokeApiKey(req.params['id'] ?? '', userId);
+    if (!ok) { res.status(404).json({ error: 'API key not found' }); return; }
+    res.json({ revoked: true });
+});
+
+// ─── Organizations ────────────────────────────────────────────────────────────
+
+app.get('/api/identity/orgs', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    res.json(orgManager.listOrgs(userId));
+});
+
+app.post('/api/identity/orgs', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const { name, description } = req.body as { name?: string; description?: string };
+    if (!name) { res.status(400).json({ error: 'name is required' }); return; }
+    res.status(201).json(orgManager.createOrg(name, userId, description));
+});
+
+app.get('/api/identity/orgs/:id/members', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const org = orgManager.getOrg(req.params['id'] ?? '');
+    if (!org) { res.status(404).json({ error: 'Org not found' }); return; }
+    if (!orgManager.getMember(org.id, userId)) { res.status(403).json({ error: 'Not a member' }); return; }
+    res.json(orgManager.listMembers(org.id));
+});
+
+app.post('/api/identity/orgs/:id/members', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const org = orgManager.getOrg(req.params['id'] ?? '');
+    if (!org) { res.status(404).json({ error: 'Org not found' }); return; }
+    const me = orgManager.getMember(org.id, userId);
+    if (!me || (me.role !== 'owner' && me.role !== 'admin')) { res.status(403).json({ error: 'Admin required' }); return; }
+    const { memberId, role = 'member' } = req.body as { memberId?: string; role?: string };
+    if (!memberId) { res.status(400).json({ error: 'memberId is required' }); return; }
+    res.status(201).json(orgManager.addMember(org.id, memberId, role as 'admin' | 'member' | 'viewer'));
+});
+
+app.delete('/api/identity/orgs/:id/members/:memberId', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const org = orgManager.getOrg(req.params['id'] ?? '');
+    if (!org) { res.status(404).json({ error: 'Org not found' }); return; }
+    const me = orgManager.getMember(org.id, userId);
+    if (!me || (me.role !== 'owner' && me.role !== 'admin')) { res.status(403).json({ error: 'Admin required' }); return; }
+    orgManager.removeMember(org.id, req.params['memberId'] ?? '');
+    res.json({ removed: true });
+});
+
+app.get('/api/identity/orgs/:id/teams', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const org = orgManager.getOrg(req.params['id'] ?? '');
+    if (!org) { res.status(404).json({ error: 'Org not found' }); return; }
+    if (!orgManager.getMember(org.id, userId)) { res.status(403).json({ error: 'Not a member' }); return; }
+    const teams = orgManager.listTeams(org.id);
+    res.json(teams.map(t => ({ ...t, memberCount: orgManager.listTeamMembers(t.id).length })));
+});
+
+app.post('/api/identity/orgs/:id/teams', (req: Request, res: Response) => {
+    const { userId } = (req as AuthedRequest).user;
+    const org = orgManager.getOrg(req.params['id'] ?? '');
+    if (!org) { res.status(404).json({ error: 'Org not found' }); return; }
+    const me = orgManager.getMember(org.id, userId);
+    if (!me || (me.role !== 'owner' && me.role !== 'admin')) { res.status(403).json({ error: 'Admin required' }); return; }
+    const { name, description } = req.body as { name?: string; description?: string };
+    if (!name) { res.status(400).json({ error: 'name is required' }); return; }
+    res.status(201).json(orgManager.createTeam(org.id, name, description));
+});
+
+app.post('/api/identity/orgs/:id/teams/:teamId/members', (req: Request, res: Response) => {
+    const org = orgManager.getOrg(req.params['id'] ?? '');
+    const team = orgManager.getTeam(req.params['teamId'] ?? '');
+    if (!org || !team || team.orgId !== org.id) { res.status(404).json({ error: 'Team not found' }); return; }
+    const { memberId, role = 'member' } = req.body as { memberId?: string; role?: string };
+    if (!memberId) { res.status(400).json({ error: 'memberId is required' }); return; }
+    res.status(201).json(orgManager.addTeamMember(team.id, memberId, role as 'lead' | 'member'));
+});
+
+// ─── Orchestration ────────────────────────────────────────────────────────────
+
+app.post('/api/orchestrate', async (req: Request, res: Response) => {
+    const { goal, model = 'claude-sonnet-4-6', tools = [], apiKey } = req.body as { goal?: string; model?: string; tools?: string[]; apiKey?: string };
+    if (!goal) { res.status(400).json({ error: 'goal is required' }); return; }
+    const key = apiKey ?? process.env.ANTHROPIC_API_KEY ?? process.env.OPENAI_API_KEY ?? '';
+    const id = await startOrchestration(goal, model, key, tools);
+    res.status(202).json({ id, status: 'running', wsUrl: `/ws/${id}` });
+});
+
+app.get('/api/orchestrate', (_req: Request, res: Response) => {
+    res.json(listOrchestrationRuns());
+});
+
+app.get('/api/orchestrate/:id', (req: Request, res: Response) => {
+    const run = getOrchestrationRun(req.params['id'] ?? '');
+    if (!run) { res.status(404).json({ error: 'Orchestration run not found' }); return; }
+    res.json(run);
+});
+
 // ─── 404 fallback ─────────────────────────────────────────────────────────────
 
 app.use((_req: Request, res: Response) => {
@@ -453,6 +661,11 @@ server.listen(PORT, async () => {
     const apiKeySet = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
     console.log(`  Live LLM:   ${apiKeySet ? 'enabled' : 'offline/demo mode (no API key)'}`);
     console.log(`  Shell:      ${process.env.ALLOW_SHELL === 'true' ? 'enabled' : 'disabled'}`);
+
+    // Seed demo identity (no-op if already exists)
+    identityStore.ensureDemoUser();
+    orgManager.ensureDemoOrg('user_demo');
+    console.log(`  Identity:    ${identityStore.listUsers().length} users, ${identityStore.listAgents().length} agents`);
 
     // Load MCP server configs (reads .mcp.json, writes defaults if absent)
     await mcpManager.loadConfig();

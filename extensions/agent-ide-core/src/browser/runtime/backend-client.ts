@@ -342,6 +342,178 @@ export async function deleteKnowledgeChunk(id: string, token?: string): Promise<
     });
 }
 
+// ─── Identity & lifecycle API ─────────────────────────────────────────────────
+
+export interface IdentityUser {
+    userId:      string;
+    email:       string;
+    name:        string;
+    avatarUrl?:  string;
+    role:        string;
+    mfaEnabled:  boolean;
+    status:      string;
+    createdAt?:  string;
+    lastLoginAt?: string;
+}
+
+export interface AgentIdentity {
+    id:           string;
+    name:         string;
+    description:  string;
+    ownerId:      string;
+    orgId?:       string;
+    model:        string;
+    status:       string;
+    capabilities: string[];
+    createdAt:    string;
+    updatedAt:    string;
+}
+
+export interface ApiKey {
+    id:          string;
+    name:        string;
+    prefix:      string;
+    userId:      string;
+    agentId?:    string;
+    scopes:      string[];
+    lastUsedAt?: string;
+    expiresAt?:  string;
+    createdAt:   string;
+    raw?:        string; // only present immediately after creation
+}
+
+export interface OrgRecord {
+    id:           string;
+    name:         string;
+    slug:         string;
+    ownerId:      string;
+    description?: string;
+    createdAt:    string;
+}
+
+export interface OrgMember {
+    orgId:    string;
+    userId:   string;
+    role:     string;
+    joinedAt: string;
+}
+
+export interface TeamRecord {
+    id:           string;
+    orgId:        string;
+    name:         string;
+    description?: string;
+    createdAt:    string;
+    memberCount?: number;
+}
+
+export async function getIdentityMe(token?: string): Promise<IdentityUser> {
+    return apiFetch<IdentityUser>('/api/identity/me', { headers: authHeaders(token) });
+}
+
+export async function updateIdentityMe(patch: Partial<Pick<IdentityUser, 'name' | 'avatarUrl' | 'mfaEnabled'>>, token?: string): Promise<IdentityUser> {
+    return apiFetch<IdentityUser>('/api/identity/me', { method: 'PUT', body: JSON.stringify(patch), headers: authHeaders(token) });
+}
+
+export async function changePassword(password: string, token?: string): Promise<void> {
+    await apiFetch<unknown>('/api/identity/me/password', { method: 'PUT', body: JSON.stringify({ password }), headers: authHeaders(token) });
+}
+
+export async function registerUser(email: string, name: string, password: string): Promise<IdentityUser> {
+    return apiFetch<IdentityUser>('/api/identity/register', { method: 'POST', body: JSON.stringify({ email, name, password }) });
+}
+
+export async function listAgentIdentities(token?: string): Promise<AgentIdentity[]> {
+    return apiFetch<AgentIdentity[]>('/api/identity/agents', { headers: authHeaders(token) });
+}
+
+export async function createAgentIdentity(data: { name: string; description?: string; model?: string; capabilities?: string[]; orgId?: string }, token?: string): Promise<AgentIdentity> {
+    return apiFetch<AgentIdentity>('/api/identity/agents', { method: 'POST', body: JSON.stringify(data), headers: authHeaders(token) });
+}
+
+export async function updateAgentIdentity(id: string, patch: Partial<Pick<AgentIdentity, 'name' | 'description' | 'model' | 'status' | 'capabilities'>>, token?: string): Promise<AgentIdentity> {
+    return apiFetch<AgentIdentity>(`/api/identity/agents/${id}`, { method: 'PUT', body: JSON.stringify(patch), headers: authHeaders(token) });
+}
+
+export async function deleteAgentIdentity(id: string, token?: string): Promise<void> {
+    await apiFetch<unknown>(`/api/identity/agents/${id}`, { method: 'DELETE', headers: authHeaders(token) });
+}
+
+export async function listApiKeys(token?: string): Promise<ApiKey[]> {
+    return apiFetch<ApiKey[]>('/api/identity/api-keys', { headers: authHeaders(token) });
+}
+
+export async function createApiKey(data: { name: string; scopes?: string[]; agentId?: string; expiresAt?: string }, token?: string): Promise<ApiKey> {
+    return apiFetch<ApiKey>('/api/identity/api-keys', { method: 'POST', body: JSON.stringify(data), headers: authHeaders(token) });
+}
+
+export async function revokeApiKey(id: string, token?: string): Promise<void> {
+    await apiFetch<unknown>(`/api/identity/api-keys/${id}`, { method: 'DELETE', headers: authHeaders(token) });
+}
+
+export async function listOrgs(token?: string): Promise<OrgRecord[]> {
+    return apiFetch<OrgRecord[]>('/api/identity/orgs', { headers: authHeaders(token) });
+}
+
+export async function createOrg(data: { name: string; description?: string }, token?: string): Promise<OrgRecord> {
+    return apiFetch<OrgRecord>('/api/identity/orgs', { method: 'POST', body: JSON.stringify(data), headers: authHeaders(token) });
+}
+
+export async function listOrgMembers(orgId: string, token?: string): Promise<OrgMember[]> {
+    return apiFetch<OrgMember[]>(`/api/identity/orgs/${orgId}/members`, { headers: authHeaders(token) });
+}
+
+export async function listOrgTeams(orgId: string, token?: string): Promise<TeamRecord[]> {
+    return apiFetch<TeamRecord[]>(`/api/identity/orgs/${orgId}/teams`, { headers: authHeaders(token) });
+}
+
+export async function createOrgTeam(orgId: string, data: { name: string; description?: string }, token?: string): Promise<TeamRecord> {
+    return apiFetch<TeamRecord>(`/api/identity/orgs/${orgId}/teams`, { method: 'POST', body: JSON.stringify(data), headers: authHeaders(token) });
+}
+
+// ─── Orchestration API ────────────────────────────────────────────────────────
+
+export interface OrchestrationTask {
+    id:          string;
+    title:       string;
+    description: string;
+    agentRole:   string;
+    model:       string;
+    tools:       string[];
+    status:      string;
+    runId?:      string;
+    output?:     string;
+}
+
+export interface OrchestrationRun {
+    id:           string;
+    goal:         string;
+    model:        string;
+    status:       string;
+    node:         string;
+    tasks:        OrchestrationTask[];
+    plan?:        string;
+    review?:      string;
+    result?:      string;
+    startedAt:    string;
+    completedAt?: string;
+}
+
+export async function startOrchestration(goal: string, model: string, tools: string[] = [], apiKey?: string): Promise<{ id: string; wsUrl: string }> {
+    return apiFetch<{ id: string; wsUrl: string }>('/api/orchestrate', {
+        method: 'POST',
+        body: JSON.stringify({ goal, model, tools, apiKey }),
+    });
+}
+
+export async function listOrchestrationRuns(): Promise<OrchestrationRun[]> {
+    return apiFetch<OrchestrationRun[]>('/api/orchestrate');
+}
+
+export async function getOrchestrationRun(id: string): Promise<OrchestrationRun> {
+    return apiFetch<OrchestrationRun>(`/api/orchestrate/${id}`);
+}
+
 // ─── MCP API ──────────────────────────────────────────────────────────────────
 
 export async function listMcpServers(): Promise<McpServerState[]> {

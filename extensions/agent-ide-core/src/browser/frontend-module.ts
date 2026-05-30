@@ -19,6 +19,7 @@ import { BenchPanelWidget, BenchPanelContribution } from './panels/bench-panel-w
 import { OptimizePanelWidget, OptimizePanelContribution } from './panels/optimize-panel-widget';
 import { McpPanelWidget, McpPanelContribution } from './panels/mcp-panel-widget';
 import { WorkspacesPanelWidget, WorkspacesPanelContribution } from './panels/workspaces-panel-widget';
+import { IdentityPanelWidget, IdentityPanelContribution } from './panels/identity-panel-widget';
 
 function bindPanel<W, C>(bind: any, Widget: any, Contribution: any): void {
     bindViewContribution(bind, Contribution);
@@ -48,6 +49,7 @@ export default new ContainerModule(bind => {
     bindPanel(bind, ArtifactsPanelWidget, ArtifactsPanelContribution);
     bindPanel(bind, McpPanelWidget,        McpPanelContribution);
     bindPanel(bind, WorkspacesPanelWidget, WorkspacesPanelContribution);
+    bindPanel(bind, IdentityPanelWidget,   IdentityPanelContribution);
 
     // Bottom panels
     bindPanel(bind, RunsPanelWidget,   RunsPanelContribution);

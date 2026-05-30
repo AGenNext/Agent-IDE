@@ -181,17 +181,21 @@ function buildToolSchemas(toolIds: string[]): OAITool[] {
 // Determine base URL from model name
 function apiBase(model: string, apiKey: string): { url: string; key: string } {
     if (model.startsWith('claude-')) {
-        // Anthropic uses its own SDK; we call OpenAI-compatible endpoint via proxy if available.
-        // For direct Anthropic calls a separate client is needed — fallback to mock.
         return { url: 'https://api.anthropic.com/v1', key: apiKey };
     }
     if (model.startsWith('gemini-')) {
         return { url: 'https://generativelanguage.googleapis.com/v1beta/openai', key: apiKey };
     }
-    return { url: 'https://api.openai.com/v1', key: apiKey };
+    // Ollama / vLLM / any OpenAI-compatible local endpoint
+    const ollamaUrl = process.env.OLLAMA_BASE_URL;
+    if (ollamaUrl && !model.startsWith('gpt-')) {
+        return { url: ollamaUrl, key: apiKey || 'ollama' };
+    }
+    const openAiBase = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
+    return { url: openAiBase, key: apiKey };
 }
 
-async function callLLM(
+export async function callLLM(
     model: string, apiKey: string,
     messages: OAIMessage[], tools: OAITool[],
     temperature: number, maxTokens: number,
