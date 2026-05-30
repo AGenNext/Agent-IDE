@@ -160,6 +160,21 @@ function buildToolSchemas(toolIds: string[]): OAITool[] {
                 },
             },
         },
+        openhands_task: {
+            type: 'function',
+            function: {
+                name: 'openhands_task',
+                description: 'Run a software development task using the OpenHandS AI agent (requires OPENHANDS_URL env var pointing to a running OpenHandS instance).',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        task:  { type: 'string', description: 'The development task to execute (bug fix, feature, refactor, etc.)' },
+                        agent: { type: 'string', description: 'OpenHandS agent to use (default: CodeActAgent)' },
+                    },
+                    required: ['task'],
+                },
+            },
+        },
     };
 
     // Built-in tools requested by the agent config

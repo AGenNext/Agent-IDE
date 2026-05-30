@@ -15,4 +15,5 @@ export const BenchPanelCommand:      Command = { id: 'agentIde.openBench',      
 export const OptimizePanelCommand:   Command = { id: 'agentIde.openOptimize',   label: 'Open Agent-Optimize',   category: 'Agent IDE' };
 export const McpPanelCommand:        Command = { id: 'agentIde.openMcp',        label: 'Open MCP / Tools',      category: 'Agent IDE' };
 export const WorkspacesPanelCommand: Command = { id: 'agentIde.openWorkspaces', label: 'Open Workspaces',       category: 'Agent IDE' };
-export const IdentityPanelCommand:   Command = { id: 'agentIde.openIdentity',   label: 'Open Identity',         category: 'Agent IDE' };
+export const IdentityPanelCommand:    Command = { id: 'agentIde.openIdentity',    label: 'Open Identity',          category: 'Agent IDE' };
+export const OrchestratePanelCommand: Command = { id: 'agentIde.openOrchestrate', label: 'Open Orchestrate',       category: 'Agent IDE' };

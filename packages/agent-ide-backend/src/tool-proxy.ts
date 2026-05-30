@@ -156,6 +156,42 @@ const TOOL_HANDLERS: Record<string, (input: Record<string, unknown>, ctx: ToolCo
         return { error: `Unsupported language: ${lang}` };
     },
 
+    // ── OpenHandS — AI software dev agent (requires OPENHANDS_URL) ───────────
+    openhands_task: async (input) => {
+        const baseUrl = process.env.OPENHANDS_URL ?? 'http://localhost:3000';
+        const task = String(input['task'] ?? '');
+        if (!task) throw new Error('task is required');
+
+        // Check health first
+        try {
+            const health = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(3000) });
+            if (!health.ok) throw new Error('unhealthy');
+        } catch {
+            return { error: `OpenHandS not reachable at ${baseUrl}. Start with: docker run -p 3000:3000 ghcr.io/all-hands-ai/openhands:latest`, connected: false };
+        }
+
+        // Submit task as a new conversation
+        const create = await fetch(`${baseUrl}/api/conversations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task, agent: input['agent'] ?? 'CodeActAgent' }),
+        });
+        if (!create.ok) throw new Error(`OpenHandS create failed: ${create.status}`);
+        const { conversation_id } = await create.json() as { conversation_id: string };
+
+        // Poll for completion (max 5 min)
+        const deadline = Date.now() + 300_000;
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 3000));
+            const status = await fetch(`${baseUrl}/api/conversations/${conversation_id}`);
+            if (!status.ok) continue;
+            const data = await status.json() as { status: string; outputs?: unknown[]; error?: string };
+            if (data.status === 'completed') return { conversationId: conversation_id, status: 'completed', outputs: data.outputs ?? [] };
+            if (data.status === 'error') throw new Error(data.error ?? 'OpenHandS task failed');
+        }
+        return { conversationId: conversation_id, status: 'timeout', message: 'Task still running — query conversationId for results' };
+    },
+
     // ── Repo Indexer ──────────────────────────────────────────────────────────
     repo_index: async (input, ctx) => {
         const rel         = String(input['path'] ?? '.');

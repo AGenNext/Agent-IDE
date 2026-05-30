@@ -128,7 +128,8 @@ app.get('/api/tools', (_req: Request, res: Response) => {
         { id: 'web_search',    name: 'Web Search',      category: 'web',    browserNative: false, description: 'Search the web via Brave Search API (requires BRAVE_API_KEY).' },
         { id: 'vector_search', name: 'Vector Search',   category: 'memory', browserNative: true,  description: 'In-memory semantic search using cosine similarity.' },
         { id: 'code_exec',     name: 'Code Executor',   category: 'code',   browserNative: false, description: 'Execute Python or JavaScript (requires ALLOW_SHELL=true).' },
-        { id: 'db_query',      name: 'DB Query',        category: 'data',   browserNative: false, description: 'Execute SQL against the configured database (requires DATABASE_URL).' },
+        { id: 'db_query',         name: 'DB Query',          category: 'data',   browserNative: false, description: 'Execute SQL against the configured database (requires DATABASE_URL).' },
+        { id: 'openhands_task',   name: 'OpenHandS Task',    category: 'code',   browserNative: false, description: 'Run a software dev task via OpenHandS agent (requires OPENHANDS_URL).' },
     ]);
 });
 
@@ -435,6 +436,7 @@ app.get('/api/config', (req, res) => {
         hasOpenAiKey:     Boolean(process.env.OPENAI_API_KEY),
         hasAnthropicKey:  Boolean(process.env.ANTHROPIC_API_KEY),
         hasDatabaseUrl:   Boolean(process.env.DATABASE_URL),
+        hasOpenHandsUrl:  Boolean(process.env.OPENHANDS_URL),
         port:             PORT,
         mcpServerCount:   mcpServers.length,
         mcpConnected:     mcpServers.filter(s => s.status === 'connected').length,

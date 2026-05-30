@@ -20,6 +20,7 @@ import { OptimizePanelWidget, OptimizePanelContribution } from './panels/optimiz
 import { McpPanelWidget, McpPanelContribution } from './panels/mcp-panel-widget';
 import { WorkspacesPanelWidget, WorkspacesPanelContribution } from './panels/workspaces-panel-widget';
 import { IdentityPanelWidget, IdentityPanelContribution } from './panels/identity-panel-widget';
+import { OrchestratePanelWidget, OrchestratePanelContribution } from './panels/orchestrate-panel-widget';
 
 function bindPanel<W, C>(bind: any, Widget: any, Contribution: any): void {
     bindViewContribution(bind, Contribution);
@@ -64,6 +65,7 @@ export default new ContainerModule(bind => {
     bind(FrontendApplicationContribution).toService(AgentBuilderContribution);
     bindPanel(bind, PlatformPanelWidget, PlatformPanelContribution);
     bindPanel(bind, ResearchPanelWidget, ResearchPanelContribution);
-    bindPanel(bind, BenchPanelWidget,    BenchPanelContribution);
+    bindPanel(bind, BenchPanelWidget,        BenchPanelContribution);
+    bindPanel(bind, OrchestratePanelWidget,  OrchestratePanelContribution);
 
 });
