@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-ide-backend
+  namespace: agent-ide
+  labels:
+    app.kubernetes.io/name: agent-ide
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-ide
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-ide
+        app.kubernetes.io/component: backend
+    spec:
+      serviceAccountName: agent-ide
+      containers:
+        - name: backend
+          image: agennext/agent-ide-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3001
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: agent-ide-env
+            - configMapRef:
+                name: agent-ide-config
+          env:
+            - name: PORT
+              value: "3001"
+            - name: WORKSPACE_ROOT
+              value: "/data"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: agent-ide-backend-data

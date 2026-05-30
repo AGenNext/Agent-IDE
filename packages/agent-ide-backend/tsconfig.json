@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDirs": ["src", "../agent-ide-types/src"],
+    "outDir": "lib",
+    "module": "commonjs",
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "ignoreDeprecations": "5.0",
+    "paths": {
+      "@agennext/agent-ide-types": ["../agent-ide-types/src/index"]
+    }
+  },
+  "include": ["src"]
+}

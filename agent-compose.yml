@@ -1,0 +1,82 @@
+# agent-compose.yml — single source of truth for Agent IDE deployments
+#
+# Docker:  docker compose -f agent-compose.yml up -d
+# k3s:     ./deploy.sh                (renders this into k3s manifests)
+# Local:   yarn start:dev             (no containers)
+
+version: "3.9"
+
+# ── Core ──────────────────────────────────────────────────────────────────────
+services:
+  agent-ide:
+    image: ghcr.io/agennext/agent-ide:${TAG:-main}
+    build:
+      context: .
+      dockerfile: Containerfile
+    ports:
+      - "${IDE_PORT:-80}:3000"
+      - "${BACKEND_PORT:-3001}:3001"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      WORKSPACE_ROOT: /data/workspace
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      OPENHANDS_URL: ${OPENHANDS_URL:-http://openhands:3000}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      ALLOW_SHELL: ${ALLOW_SHELL:-false}
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+    volumes:
+      - agent-ide-data:/data
+    depends_on:
+      ollama:
+        condition: service_healthy
+        required: false
+      openhands:
+        condition: service_started
+        required: false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+# ── Optional: local LLM (Ollama) ──────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [ollama]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# ── Optional: OpenHandS ───────────────────────────────────────────────────────
+  openhands:
+    image: ghcr.io/all-hands-ai/openhands:latest
+    profiles: [openhands]
+    ports:
+      - "3002:3000"
+    environment:
+      SANDBOX_RUNTIME_CONTAINER_IMAGE: ghcr.io/all-hands-ai/runtime:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - openhands-data:/opt/workspace_base
+    restart: unless-stopped
+
+volumes:
+  agent-ide-data:
+  ollama-data:
+  openhands-data:

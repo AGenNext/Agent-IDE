@@ -1,0 +1,16 @@
+{
+  "name": "@agennext/agent-ide-types",
+  "version": "0.1.0",
+  "description": "Agent IDE domain type library",
+  "keywords": ["agent-ide", "types"],
+  "license": "MIT",
+  "main": "lib/index",
+  "typings": "lib/index.d.ts",
+  "files": ["lib", "src"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint --ext .ts src"
+  }
+}

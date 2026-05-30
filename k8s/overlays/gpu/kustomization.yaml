@@ -1,0 +1,60 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# GPU overlay — for clusters with GPU nodes running local LLM inference servers
+# (e.g. Ollama or vLLM). Schedules workloads onto nodes labelled gpu=true,
+# tolerates the nvidia.com/gpu taint, and enables shell access so the backend
+# can invoke local model endpoints or shell-based tooling.
+#
+# Usage:
+#   kubectl apply -k k8s/overlays/gpu
+#
+# Prerequisites:
+#   - Nodes must be labelled:  kubectl label node <node> gpu=true
+#   - Nodes must be tainted:   kubectl taint node <node> nvidia.com/gpu=present:NoSchedule
+#   - NVIDIA device plugin or GPU operator must be installed in the cluster.
+
+namePrefix: gpu-
+
+resources:
+  - ../../base
+
+patches:
+  # Schedule backend on GPU nodes and tolerate the GPU taint
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          gpu: "true"
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - key: nvidia.com/gpu
+            operator: Equal
+            value: present
+            effect: NoSchedule
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ALLOW_SHELL
+          value: "true"
+    target:
+      kind: Deployment
+      name: agent-ide-backend
+
+  # Schedule IDE on GPU nodes as well (for GPU-accelerated previews / tooling)
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          gpu: "true"
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - key: nvidia.com/gpu
+            operator: Equal
+            value: present
+            effect: NoSchedule
+    target:
+      kind: Deployment
+      name: agent-ide-ide

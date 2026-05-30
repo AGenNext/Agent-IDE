@@ -1,0 +1,28 @@
+services:
+  agent-ide:
+    image: ghcr.io/agennext/agent-ide:main
+    build:
+      context: .
+      dockerfile: Containerfile
+    ports:
+      - "80:3000"     # IDE  → http://localhost
+      - "3001:3001"   # API  → http://localhost:3001 (optional direct access)
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      WORKSPACE_ROOT: /data/workspace
+    volumes:
+      - agent-ide-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  agent-ide-data:

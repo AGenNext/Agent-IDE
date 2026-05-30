@@ -1,0 +1,92 @@
+global:
+  image:
+    registry: ""
+  pullPolicy: IfNotPresent
+
+# ─── IDE (Theia frontend) ─────────────────────────────────────────────────────
+ide:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: agennext/agent-ide
+    tag: latest
+
+  service:
+    type: ClusterIP
+    port: 3000
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ─── Backend (Express + WebSocket API) ───────────────────────────────────────
+backend:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: agennext/agent-ide-backend
+    tag: latest
+
+  service:
+    type: ClusterIP
+    port: 3001
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ─── Ingress ──────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: nginx
+  host: agent-ide.example.com
+  tls:
+    enabled: false
+    secretName: agent-ide-tls
+
+# ─── Environment / Secrets ───────────────────────────────────────────────────
+env:
+  openaiApiKey: ""
+  anthropicApiKey: ""
+  allowShell: "false"
+  braveApiKey: ""
+  databaseUrl: ""
+  githubToken: ""
+  jwtSecret: "change-in-production"
+  authEnabled: "false"
+  demoPassword: "demo"
+
+# ─── Service Account ─────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""
+
+# ─── Horizontal Pod Autoscaler ────────────────────────────────────────────────
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80

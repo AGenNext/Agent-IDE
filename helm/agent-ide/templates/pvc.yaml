@@ -1,0 +1,21 @@
+{{- if and .Values.backend.enabled .Values.backend.persistence.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "agent-ide.fullname" . }}-backend-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agent-ide.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backend.persistence.size }}
+  {{- if .Values.backend.persistence.storageClass }}
+  storageClassName: {{ .Values.backend.persistence.storageClass }}
+  {{- else if eq .Values.backend.persistence.storageClass "" }}
+  {{- /* Use cluster default storage class when storageClass is explicitly empty string */ -}}
+  {{- end }}
+{{- end }}

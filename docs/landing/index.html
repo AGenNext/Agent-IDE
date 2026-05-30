@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent IDE — AGenNext Developer Workspace</title>
+  <style>
+    :root {
+      --bg: #0d0f14;
+      --surface: #151820;
+      --border: #1e2330;
+      --accent: #4f8ef7;
+      --accent2: #7c5cbf;
+      --green: #3ecf8e;
+      --yellow: #f5c542;
+      --red: #e05c5c;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --code-bg: #0a0c10;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Nav */
+    nav { display: flex; align-items: center; justify-content: space-between; padding: 0 2rem; height: 60px; border-bottom: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; z-index: 10; }
+    .nav-logo { font-weight: 700; font-size: 1.1rem; letter-spacing: -0.5px; }
+    .nav-logo span { color: var(--accent); }
+    .nav-links { display: flex; gap: 2rem; font-size: 0.9rem; color: var(--muted); }
+    .nav-links a { color: var(--muted); }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-cta { background: var(--accent); color: #fff; padding: 0.4rem 1rem; border-radius: var(--radius); font-size: 0.85rem; font-weight: 600; }
+    .nav-cta:hover { background: #3a7ae0; text-decoration: none; }
+
+    /* Hero */
+    .hero { text-align: center; padding: 6rem 1rem 4rem; max-width: 800px; margin: 0 auto; }
+    .hero-badge { display: inline-block; background: rgba(79,142,247,0.12); border: 1px solid rgba(79,142,247,0.3); color: var(--accent); font-size: 0.8rem; padding: 0.25rem 0.75rem; border-radius: 100px; margin-bottom: 1.5rem; letter-spacing: 0.5px; }
+    .hero h1 { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 800; line-height: 1.15; letter-spacing: -1px; margin-bottom: 1.25rem; }
+    .hero h1 span { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .hero p { font-size: 1.1rem; color: var(--muted); max-width: 580px; margin: 0 auto 2rem; }
+    .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    .btn-primary { background: var(--accent); color: #fff; padding: 0.7rem 1.5rem; border-radius: var(--radius); font-weight: 600; font-size: 0.95rem; }
+    .btn-primary:hover { background: #3a7ae0; text-decoration: none; }
+    .btn-outline { background: transparent; color: var(--text); padding: 0.7rem 1.5rem; border-radius: var(--radius); font-weight: 600; font-size: 0.95rem; border: 1px solid var(--border); }
+    .btn-outline:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+
+    /* Pill row */
+    .pills { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; padding: 2rem 1rem 0; }
+    .pill { background: var(--surface); border: 1px solid var(--border); border-radius: 100px; padding: 0.3rem 0.9rem; font-size: 0.8rem; color: var(--muted); }
+    .pill.green { border-color: rgba(62,207,142,0.3); color: var(--green); }
+    .pill.blue  { border-color: rgba(79,142,247,0.3); color: var(--accent); }
+    .pill.purple{ border-color: rgba(124,92,191,0.3); color: var(--accent2); }
+
+    /* Sections */
+    section { max-width: 1100px; margin: 0 auto; padding: 5rem 1.5rem; }
+    section h2 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.5rem; }
+    section .section-sub { color: var(--muted); margin-bottom: 2.5rem; font-size: 1rem; }
+
+    /* Feature grid */
+    .feature-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.25rem; }
+    .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; }
+    .feature-card:hover { border-color: var(--accent); }
+    .feature-icon { font-size: 1.5rem; margin-bottom: 0.75rem; }
+    .feature-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.4rem; }
+    .feature-card p { font-size: 0.875rem; color: var(--muted); }
+
+    /* Steps */
+    .steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1.25rem; }
+    .step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; }
+    .step-num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 0.8rem; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-bottom: 0.75rem; }
+    .step h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem; }
+    .step p { font-size: 0.85rem; color: var(--muted); }
+
+    /* Code blocks */
+    pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; overflow-x: auto; font-size: 0.85rem; line-height: 1.7; }
+    code { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; }
+    .code-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .hl-green  { color: var(--green); }
+    .hl-yellow { color: var(--yellow); }
+    .hl-blue   { color: var(--accent); }
+    .hl-muted  { color: var(--muted); }
+
+    /* Two-col */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: start; }
+    @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* Table */
+    .tbl-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.4px; }
+    td { padding: 0.65rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    td code { background: var(--code-bg); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .badge-green  { background: rgba(62,207,142,0.12); color: var(--green); }
+    .badge-yellow { background: rgba(245,197,66,0.12); color: var(--yellow); }
+    .badge-blue   { background: rgba(79,142,247,0.12); color: var(--accent); }
+
+    /* Divider */
+    .divider { border: none; border-top: 1px solid var(--border); }
+
+    /* Footer */
+    footer { text-align: center; padding: 3rem 1rem; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--border); }
+    footer a { color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<!-- ── Nav ───────────────────────────────────────────────────────────────────── -->
+<nav>
+  <div class="nav-logo">Agent<span>IDE</span></div>
+  <div class="nav-links">
+    <a href="#quickstart">Quickstart</a>
+    <a href="#tools">Tools</a>
+    <a href="#mcp">MCP</a>
+    <a href="#api">API</a>
+    <a href="#sdk">SDK</a>
+    <a href="https://github.com/agennext/agent-ide" target="_blank">GitHub</a>
+  </div>
+  <a class="nav-cta" href="#quickstart">Get started</a>
+</nav>
+
+<!-- ── Hero ──────────────────────────────────────────────────────────────────── -->
+<div class="hero">
+  <div class="hero-badge">AGenNext &mdash; Open Agent Workspace</div>
+  <h1>The IDE built for<br/><span>agent-first development</span></h1>
+  <p>A full VS Code-like workspace — live agent execution, governed tool use, semantic memory, MCP servers, and multi-model support, all in one browser-based IDE.</p>
+  <div class="hero-actions">
+    <a class="btn-primary" href="#quickstart">Start in 60 seconds</a>
+    <a class="btn-outline" href="https://github.com/agennext/agent-ide" target="_blank">View on GitHub</a>
+  </div>
+</div>
+
+<div class="pills">
+  <span class="pill blue">Eclipse Theia</span>
+  <span class="pill blue">ReAct agent loop</span>
+  <span class="pill green">OpenAI / Anthropic / Gemini</span>
+  <span class="pill green">MCP protocol</span>
+  <span class="pill purple">Governance &amp; Approvals</span>
+  <span class="pill purple">Vector search</span>
+  <span class="pill">Multi-tenant</span>
+  <span class="pill">Docker-ready</span>
+</div>
+
+<!-- ── Features ──────────────────────────────────────────────────────────────── -->
+<section>
+  <h2>Everything you need to build with agents</h2>
+  <p class="section-sub">16 panels. A live backend. A full governance layer. Out of the box.</p>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <h3>Live Agent Execution</h3>
+      <p>ReAct loop with real LLM API calls. Every thought, tool call, and observation streams over WebSocket in real time.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔧</div>
+      <h3>9 Built-in Tools</h3>
+      <p>File R/W, shell, HTTP client, browser, web search, vector search, code exec, SQL, and repo indexer — all policy-gated.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔌</div>
+      <h3>MCP Gateway</h3>
+      <p>Connect any MCP server over stdio. GitHub, Brave Search, Postgres, Puppeteer, and Filesystem pre-configured. Tools auto-route to the agent loop.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🧠</div>
+      <h3>Semantic Memory</h3>
+      <p>Ingest text, URLs, or entire repos. n-gram hash embeddings (no deps) + OpenAI embeddings when key is set. Completed runs auto-persist to memory.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🛡️</div>
+      <h3>Governance Engine</h3>
+      <p>Tenant-scoped policies. Append-only audit log. Human-in-the-loop approval gate — tool calls pause until approved or auto-reject after 5 minutes.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🏢</div>
+      <h3>Multi-tenant Auth</h3>
+      <p>HMAC-SHA256 JWT. Per-user workspaces with CRUD and activation. AUTH_ENABLED flag for dev / prod modes.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🤖</div>
+      <h3>Multi-model</h3>
+      <p>Claude, GPT-4o, Gemini — any OpenAI-compatible endpoint. Offline demo mode synthesizes traces with no API key.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📦</div>
+      <h3>repo_index Tool</h3>
+      <p>Walk a local repository, chunk source files by extension, ingest into the knowledge store. Use <code>vector_search</code> to find relevant code cheaply.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🔁</div>
+      <h3>Trace &amp; Replay</h3>
+      <p>Every run is persisted. Step through traces, scrub the timeline, inspect token usage and cost per step in the Runs and Replay panels.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="divider"/>
+
+<!-- ── Quickstart ─────────────────────────────────────────────────────────────── -->
+<section id="quickstart">
+  <h2>Quickstart</h2>
+  <p class="section-sub">IDE + backend running in under a minute.</p>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <h3>Clone &amp; install</h3>
+      <p>Requires Node 22 and Yarn (via corepack).</p>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <h3>Build the workspace</h3>
+      <p>Single command builds both the Theia frontend and the backend.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <h3>Start IDE + backend</h3>
+      <p>Theia on <strong>:3000</strong>, backend API + WebSocket on <strong>:3001</strong>.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <h3>Run your first agent</h3>
+      <p>Open the Runs panel, hit <strong>⚡ Live Run</strong>, pick a model and task.</p>
+    </div>
+  </div>
+
+  <br/>
+  <div class="code-label">Terminal</div>
+  <pre><code><span class="hl-muted"># 1. Clone</span>
+git clone https://github.com/agennext/agent-ide
+cd agent-ide
+
+<span class="hl-muted"># 2. Install</span>
+corepack enable
+yarn install
+
+<span class="hl-muted"># 3. Build</span>
+yarn build
+
+<span class="hl-muted"># 4. Start the Theia IDE (port 3000)</span>
+yarn start
+
+<span class="hl-muted"># 5. Start the backend (port 3001) — separate terminal</span>
+cd packages/agent-ide-backend
+npx ts-node src/server.ts</code></pre>
+
+  <br/>
+  <div class="code-label">.env — backend environment</div>
+  <pre><code><span class="hl-muted"># LLM — at least one required for live mode</span>
+<span class="hl-yellow">OPENAI_API_KEY</span>=sk-...
+<span class="hl-yellow">ANTHROPIC_API_KEY</span>=sk-ant-...
+
+<span class="hl-muted"># Tools</span>
+<span class="hl-yellow">ALLOW_SHELL</span>=true          <span class="hl-muted"># enables shell + code_exec tools</span>
+<span class="hl-yellow">BRAVE_API_KEY</span>=...         <span class="hl-muted"># enables web_search tool</span>
+<span class="hl-yellow">DATABASE_URL</span>=postgres://... <span class="hl-muted"># enables db_query tool</span>
+
+<span class="hl-muted"># MCP</span>
+<span class="hl-yellow">GITHUB_TOKEN</span>=ghp_...      <span class="hl-muted"># enables GitHub MCP server</span>
+
+<span class="hl-muted"># Auth (optional — demo mode works without)</span>
+<span class="hl-yellow">AUTH_ENABLED</span>=true
+<span class="hl-yellow">JWT_SECRET</span>=change-in-production
+<span class="hl-yellow">DEMO_PASSWORD</span>=yourpassword</code></pre>
+
+  <br/>
+  <div class="code-label">Docker</div>
+  <pre><code>docker build -t agennext/agent-ide:local .
+docker run --rm -p 3000:3000 -p 3001:3001 \
+  -e <span class="hl-yellow">OPENAI_API_KEY</span>=sk-... \
+  -e <span class="hl-yellow">ALLOW_SHELL</span>=true \
+  agennext/agent-ide:local</code></pre>
+</section>
+
+<hr class="divider"/>
+
+<!-- ── Tools ──────────────────────────────────────────────────────────────────── -->
+<section id="tools">
+  <h2>Built-in Tools</h2>
+  <p class="section-sub">All tool calls are evaluated against tenant-scoped governance policies before execution. Shell, code exec, and DB query require human approval by default.</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr><th>Tool ID</th><th>Category</th><th>Description</th><th>Requires</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>file_rw</code></td><td>File</td><td>Read, write, list, or delete workspace files</td><td>—</td></tr>
+        <tr><td><code>shell</code></td><td>Code</td><td>Execute shell commands in workspace root</td><td><span class="badge badge-yellow">ALLOW_SHELL=true</span></td></tr>
+        <tr><td><code>http_client</code></td><td>API</td><td>Outbound HTTP requests with custom headers and body</td><td>—</td></tr>
+        <tr><td><code>browser</code></td><td>Web</td><td>Fetch a URL and extract page text content</td><td>—</td></tr>
+        <tr><td><code>web_search</code></td><td>Web</td><td>Brave Search API — returns title, URL, snippet</td><td><span class="badge badge-yellow">BRAVE_API_KEY</span></td></tr>
+        <tr><td><code>vector_search</code></td><td>Memory</td><td>Semantic cosine-similarity search over knowledge store</td><td>—</td></tr>
+        <tr><td><code>code_exec</code></td><td>Code</td><td>Execute Python or JavaScript, return stdout/stderr</td><td><span class="badge badge-yellow">ALLOW_SHELL=true</span></td></tr>
+        <tr><td><code>db_query</code></td><td>Data</td><td>SQL queries against a configured database</td><td><span class="badge badge-yellow">DATABASE_URL</span></td></tr>
+        <tr><td><code>repo_index</code></td><td>Memory</td><td>Walk a local repo, chunk source files, ingest into knowledge store</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <br/>
+  <div class="code-label">Invoke a tool directly via REST</div>
+  <pre><code><span class="hl-blue">POST</span> /api/tools/repo_index/invoke
+Content-Type: application/json
+
+{
+  <span class="hl-green">"input"</span>: {
+    <span class="hl-green">"path"</span>: <span class="hl-yellow">"."</span>,
+    <span class="hl-green">"extensions"</span>: [<span class="hl-yellow">".ts"</span>, <span class="hl-yellow">".tsx"</span>, <span class="hl-yellow">".py"</span>]
+  }
+}</code></pre>
+</section>
+
+<hr class="divider"/>
+
+<!-- ── MCP ────────────────────────────────────────────────────────────────────── -->
+<section id="mcp">
+  <h2>MCP Servers</h2>
+  <p class="section-sub">Connect any MCP (Model Context Protocol) server over stdio. Tools are auto-discovered and surfaced to the agent loop as <code>mcp__&lt;serverId&gt;__&lt;toolName&gt;</code>.</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr><th>Server</th><th>Command</th><th>Requires</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>filesystem</code></td><td><code>npx -y @modelcontextprotocol/server-filesystem .</code></td><td>—</td></tr>
+        <tr><td><code>brave-search</code></td><td><code>npx -y @modelcontextprotocol/server-brave-search</code></td><td><span class="badge badge-yellow">BRAVE_API_KEY</span></td></tr>
+        <tr><td><code>postgres</code></td><td><code>npx -y @modelcontextprotocol/server-postgres $DATABASE_URL</code></td><td><span class="badge badge-yellow">DATABASE_URL</span></td></tr>
+        <tr><td><code>puppeteer</code></td><td><code>npx -y @modelcontextprotocol/server-puppeteer</code></td><td>—</td></tr>
+        <tr><td><code>github</code></td><td><code>npx -y @modelcontextprotocol/server-github</code></td><td><span class="badge badge-yellow">GITHUB_TOKEN</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <br/>
+  <div class="two-col">
+    <div>
+      <div class="code-label">Connect a server</div>
+      <pre><code><span class="hl-blue">POST</span> /api/mcp/servers/github/connect</code></pre>
+      <br/>
+      <div class="code-label">List connected tools</div>
+      <pre><code><span class="hl-blue">GET</span> /api/mcp/tools</code></pre>
+    </div>
+    <div>
+      <div class="code-label">Add a custom server</div>
+      <pre><code><span class="hl-blue">POST</span> /api/mcp/servers
+{
+  <span class="hl-green">"id"</span>: <span class="hl-yellow">"my-server"</span>,
+  <span class="hl-green">"name"</span>: <span class="hl-yellow">"My MCP Server"</span>,
+  <span class="hl-green">"transport"</span>: <span class="hl-yellow">"stdio"</span>,
+  <span class="hl-green">"command"</span>: <span class="hl-yellow">"npx -y my-mcp-package"</span>,
+  <span class="hl-green">"env"</span>: { <span class="hl-green">"API_KEY"</span>: <span class="hl-yellow">"${MY_API_KEY}"</span> }
+}</code></pre>
+    </div>
+  </div>
+
+  <br/>
+  <p style="font-size:0.875rem; color:var(--muted);">Server config is persisted to <code>.mcp.json</code> in your workspace root. Env var references like <code>${GITHUB_TOKEN}</code> are resolved at connect time from the process environment.</p>
+</section>
+
+<hr class="divider"/>
+
+<!-- ── REST API ───────────────────────────────────────────────────────────────── -->
+<section id="api">
+  <h2>REST API</h2>
+  <p class="section-sub">Backend runs on <strong>port 3001</strong>. All routes require a Bearer token when <code>AUTH_ENABLED=true</code>. In demo mode every request is treated as <code>user_demo</code>.</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/health</code></td><td>Server health, uptime, version</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/config</code></td><td>Feature flags, key presence, counts</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/runs</code></td><td>Submit an agent task → <code>{ runId, wsUrl }</code></td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/runs</code></td><td>List recent runs (summary)</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/runs/:id</code></td><td>Full run trace with all steps</td></tr>
+        <tr><td><span class="badge badge-yellow">DELETE</span></td><td><code>/api/runs/:id</code></td><td>Cancel a running run</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/tools</code></td><td>List available tools with metadata</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/tools/:id/invoke</code></td><td>Invoke a tool directly</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/mcp/servers</code></td><td>MCP servers with connection status</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/mcp/servers/:id/connect</code></td><td>Connect an MCP server</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/mcp/tools</code></td><td>All tools from all connected servers</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/auth/login</code></td><td>Password login → JWT token</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/auth/me</code></td><td>Current authenticated user</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/workspaces</code></td><td>List caller's workspaces</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/workspaces</code></td><td>Create a workspace</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/knowledge</code></td><td>List knowledge chunks</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/knowledge/search</code></td><td>Semantic vector search</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/knowledge/ingest</code></td><td>Ingest text or URL into memory</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/governance/policies</code></td><td>List tenant policies</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/governance/audit</code></td><td>Filtered audit log</td></tr>
+        <tr><td><span class="badge badge-green">GET</span></td><td><code>/api/governance/approvals</code></td><td>Pending tool approvals</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/governance/approvals/:id/approve</code></td><td>Approve a held tool call</td></tr>
+        <tr><td><span class="badge badge-blue">POST</span></td><td><code>/api/governance/approvals/:id/reject</code></td><td>Reject a held tool call</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <br/>
+  <div class="code-label">Submit a run and stream steps</div>
+  <pre><code><span class="hl-muted"># 1. Submit</span>
+<span class="hl-blue">POST</span> http://localhost:3001/api/runs
+{
+  <span class="hl-green">"model"</span>: <span class="hl-yellow">"claude-sonnet-4-6"</span>,
+  <span class="hl-green">"task"</span>: <span class="hl-yellow">"Summarise the top 3 open GitHub issues in this repo"</span>,
+  <span class="hl-green">"tools"</span>: [<span class="hl-yellow">"vector_search"</span>, <span class="hl-yellow">"http_client"</span>],
+  <span class="hl-green">"apiKey"</span>: <span class="hl-yellow">"sk-ant-..."</span>
+}
+
+<span class="hl-muted"># Response → { "runId": "abc123", "wsUrl": "/ws/abc123" }</span>
+
+<span class="hl-muted"># 2. Stream via WebSocket</span>
+wscat -c ws://localhost:3001/ws/abc123</code></pre>
+
+  <br/>
+  <div class="code-label">WebSocket message types</div>
+  <pre><code>run:started          <span class="hl-muted">→ run record</span>
+run:step             <span class="hl-muted">→ TraceStepRecord { type: thought | action | observation | result | error }</span>
+run:completed        <span class="hl-muted">→ final run record with cost/token totals</span>
+run:failed           <span class="hl-muted">→ { error: string }</span>
+governance:approval-request   <span class="hl-muted">→ pending tool call details</span>
+governance:approval-resolved  <span class="hl-muted">→ approved | rejected</span></code></pre>
+</section>
+
+<hr class="divider"/>
+
+<!-- ── SDK ────────────────────────────────────────────────────────────────────── -->
+<section id="sdk">
+  <h2>Frontend SDK</h2>
+  <p class="section-sub"><code>backend-client.ts</code> — a typed HTTP + WebSocket client shipped inside the Theia extension. Import it in any panel or custom extension.</p>
+
+  <div class="code-label">Import</div>
+  <pre><code><span class="hl-blue">import</span> { backendClient } <span class="hl-blue">from</span> <span class="hl-yellow">'../runtime/backend-client'</span>;</code></pre>
+
+  <br/>
+  <div class="two-col">
+    <div>
+      <div class="code-label">Submit a run + stream steps</div>
+      <pre><code><span class="hl-muted">// Submit</span>
+<span class="hl-blue">const</span> { runId } = <span class="hl-blue">await</span> backendClient.<span class="hl-green">submitRun</span>({
+  model: <span class="hl-yellow">'claude-sonnet-4-6'</span>,
+  task:  <span class="hl-yellow">'Analyse this codebase'</span>,
+  tools: [<span class="hl-yellow">'repo_index'</span>, <span class="hl-yellow">'vector_search'</span>],
+});
+
+<span class="hl-muted">// Stream</span>
+backendClient.<span class="hl-green">streamRun</span>(runId, (msg) => {
+  <span class="hl-blue">if</span> (msg.type === <span class="hl-yellow">'run:step'</span>) {
+    console.log(msg.payload);   <span class="hl-muted">// TraceStepRecord</span>
+  }
+});</code></pre>
+    </div>
+    <div>
+      <div class="code-label">Knowledge store</div>
+      <pre><code><span class="hl-muted">// Ingest text</span>
+<span class="hl-blue">await</span> backendClient.<span class="hl-green">ingestText</span>(
+  <span class="hl-yellow">'My doc title'</span>,
+  content
+);
+
+<span class="hl-muted">// Semantic search</span>
+<span class="hl-blue">const</span> results = <span class="hl-blue">await</span> backendClient.<span class="hl-green">searchKnowledge</span>(
+  <span class="hl-yellow">'agent lifecycle'</span>,
+  5   <span class="hl-muted">// topK</span>
+);</code></pre>
+      <br/>
+      <div class="code-label">MCP tools</div>
+      <pre><code><span class="hl-blue">await</span> backendClient.<span class="hl-green">connectMcpServer</span>(<span class="hl-yellow">'github'</span>);
+<span class="hl-blue">const</span> tools = <span class="hl-blue">await</span> backendClient.<span class="hl-green">listMcpTools</span>();
+<span class="hl-muted">// → [{ serverId, name, description, inputSchema }]</span></code></pre>
+    </div>
+  </div>
+
+  <br/>
+  <div class="code-label">Auth</div>
+  <pre><code><span class="hl-blue">const</span> { token, user } = <span class="hl-blue">await</span> backendClient.<span class="hl-green">login</span>(<span class="hl-yellow">'you@example.com'</span>, <span class="hl-yellow">'password'</span>);
+<span class="hl-muted">// Token is persisted automatically via session-store.ts (localStorage)</span>
+
+<span class="hl-blue">const</span> me = <span class="hl-blue">await</span> backendClient.<span class="hl-green">getMe</span>();
+<span class="hl-muted">// → { userId, email, name }</span></code></pre>
+
+  <br/>
+  <div class="code-label">Governance approvals</div>
+  <pre><code><span class="hl-muted">// Poll pending approvals</span>
+<span class="hl-blue">const</span> pending = <span class="hl-blue">await</span> backendClient.<span class="hl-green">listApprovals</span>();
+
+<span class="hl-muted">// Approve or reject a held tool call</span>
+<span class="hl-blue">await</span> backendClient.<span class="hl-green">approveRequest</span>(pending[0].id);
+<span class="hl-blue">await</span> backendClient.<span class="hl-green">rejectRequest</span>(pending[0].id);</code></pre>
+</section>
+
+<hr class="divider"/>
+
+<!-- ── Footer ─────────────────────────────────────────────────────────────────── -->
+<footer>
+  <p>Agent IDE &mdash; Built by <a href="https://github.com/agennext" target="_blank">AGenNext</a> &mdash; <a href="https://github.com/agennext/agent-ide" target="_blank">GitHub</a> &mdash; MIT License</p>
+</footer>
+
+</body>
+</html>

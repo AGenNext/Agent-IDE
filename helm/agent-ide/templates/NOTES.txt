@@ -1,0 +1,55 @@
+Thank you for installing {{ .Chart.Name }} {{ .Chart.AppVersion }}!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ACCESS THE IDE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.ingress.enabled }}
+  IDE URL: http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/
+  API URL: http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}/api
+{{- else if contains "NodePort" .Values.ide.service.type }}
+  export NODE_PORT=$(kubectl get svc {{ include "agent-ide.fullname" . }}-ide \
+    --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}")
+  export NODE_IP=$(kubectl get nodes -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "IDE URL: http://$NODE_IP:$NODE_PORT"
+{{- else if contains "LoadBalancer" .Values.ide.service.type }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be assigned.
+  export SERVICE_IP=$(kubectl get svc {{ include "agent-ide.fullname" . }}-ide \
+    --namespace {{ .Release.Namespace }} \
+    -o jsonpath="{.status.loadBalancer.ingress[0].ip}")
+  echo "IDE URL: http://$SERVICE_IP:{{ .Values.ide.service.port }}"
+{{- else }}
+  # Port-forward for local access:
+  kubectl port-forward svc/{{ include "agent-ide.fullname" . }}-ide \
+    --namespace {{ .Release.Namespace }} 3000:3000
+  echo "IDE URL: http://localhost:3000"
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CONFIGURE API KEYS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  API keys are stored as a Kubernetes Secret. To update them:
+
+  kubectl create secret generic {{ include "agent-ide.fullname" . }}-env \
+    --namespace {{ .Release.Namespace }} \
+    --from-literal=OPENAI_API_KEY=sk-... \
+    --from-literal=ANTHROPIC_API_KEY=sk-ant-... \
+    --from-literal=GITHUB_TOKEN=ghp_... \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  Or upgrade via Helm values:
+  helm upgrade {{ .Release.Name }} . \
+    --namespace {{ .Release.Namespace }} \
+    --set env.anthropicApiKey=sk-ant-...
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CHECK STATUS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  kubectl get pods --namespace {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+  Backend logs:
+  kubectl logs -l app.kubernetes.io/component=backend --namespace {{ .Release.Namespace }}
+
+  IDE logs:
+  kubectl logs -l app.kubernetes.io/component=ide --namespace {{ .Release.Namespace }}
+
+For full documentation see: https://github.com/agennext/agent-ide

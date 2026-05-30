@@ -1,0 +1,10 @@
+apiVersion: v2
+name: agent-ide
+description: AGenNext Agent IDE — Theia-based agent workspace
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords: [agent, ide, llm, mcp, theia]
+maintainers:
+  - name: AGenNext
+    url: https://github.com/agennext

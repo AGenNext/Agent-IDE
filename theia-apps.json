@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "Agent IDE",
+      "appPath": "applications/browser-app",
+      "target": "browser",
+      "configPath": "applications/browser-app/package.json"
+    }
+  ]
+}
