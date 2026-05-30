@@ -8,14 +8,9 @@ PROFILES   ?=
 PROFILE_FLAGS := $(foreach p,$(PROFILES),--profile $(p))
 
 .PHONY: all build-code build-container push-image deploy-cluster \
-        validate-compose tail-logs stop-cluster help
+        tail-logs stop-cluster help
 
-all: validate-compose build-code build-container push-image deploy-cluster
-
-validate-compose:            ## validate agent-compose.yml
-	@echo "▶  validate-compose..."
-	docker compose -f agent-compose.yml $(PROFILE_FLAGS) config --quiet
-	@echo "✔  OK"
+all: build-code build-container push-image deploy-cluster
 
 build-code:                  ## compile TypeScript (all packages)
 	@echo "▶  build-code..."
@@ -25,7 +20,8 @@ build-code:                  ## compile TypeScript (all packages)
 	yarn --cwd applications/browser-app build
 	@echo "✔  build-code done"
 
-build-container:             ## docker build → :SHA + :latest
+build-container:             ## docker build → :SHA + :latest  [validates compose first]
+	@docker compose -f agent-compose.yml $(PROFILE_FLAGS) config --quiet
 	@echo "▶  build-container $(IMAGE):$(TAG)..."
 	docker build -f Containerfile \
 		--tag $(IMAGE):$(TAG) \
