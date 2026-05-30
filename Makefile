@@ -7,56 +7,63 @@ PROFILES   ?=
 
 PROFILE_FLAGS := $(foreach p,$(PROFILES),--profile $(p))
 
-.PHONY: all compose build publish deploy logs down
+.PHONY: all \
+        validate-compose \
+        build-image \
+        push-image \
+        deploy-cluster \
+        tail-logs \
+        stop-all \
+        help
 
-## all: compose → build → publish → deploy
-all: compose build publish deploy
+## Full pipeline: validate → build → push → deploy
+all: validate-compose build-image push-image deploy-cluster
 
-## compose: validate agent-compose.yml
-compose:
-	@echo "▶  Validating agent-compose.yml..."
+## validate-compose: lint agent-compose.yml
+validate-compose:
+	@echo "▶  validate-compose..."
 	docker compose -f agent-compose.yml $(PROFILE_FLAGS) config --quiet
-	@echo "✔  agent-compose.yml is valid"
+	@echo "✔  agent-compose.yml OK"
 
-## build: build the combined image
-build:
-	@echo "▶  Building $(IMAGE):$(TAG)..."
+## build-image: docker build → :SHA + :latest
+build-image:
+	@echo "▶  build-image $(IMAGE):$(TAG)..."
 	docker build -f Containerfile \
 		--tag $(IMAGE):$(TAG) \
 		--tag $(IMAGE):latest \
 		--label "org.opencontainers.image.revision=$(shell git rev-parse HEAD 2>/dev/null)" \
 		--label "org.opencontainers.image.created=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		.
-	@echo "✔  Built $(IMAGE):$(TAG)"
+	@echo "✔  built $(IMAGE):$(TAG)"
 
-## publish: push image to GHCR (docker login ghcr.io first)
-publish:
-	@echo "▶  Pushing $(IMAGE):$(TAG)..."
+## push-image: docker push to GHCR  (run: docker login ghcr.io first)
+push-image:
+	@echo "▶  push-image $(IMAGE):$(TAG)..."
 	docker push $(IMAGE):$(TAG)
 	docker push $(IMAGE):latest
-	@echo "✔  Published $(IMAGE):$(TAG)"
+	@echo "✔  pushed $(IMAGE):$(TAG)"
 
-## deploy: apply to k3s (or docker compose if k3s not present)
-deploy:
+## deploy-cluster: apply to k3s; falls back to docker compose
+deploy-cluster:
 	@if command -v k3s >/dev/null 2>&1 || command -v kubectl >/dev/null 2>&1; then \
-		echo "▶  Deploying to k3s (namespace: $(NAMESPACE))..."; \
+		echo "▶  deploy-cluster → k3s (namespace: $(NAMESPACE))"; \
 		bash deploy.sh $(TAG) $(foreach p,$(PROFILES),--profile $(p)) --namespace $(NAMESPACE); \
 	else \
-		echo "▶  k3s not found — deploying via docker compose..."; \
+		echo "▶  deploy-cluster → docker compose (k3s not found)"; \
 		TAG=$(TAG) docker compose -f agent-compose.yml $(PROFILE_FLAGS) up -d; \
-		echo "✔  Running at http://localhost"; \
+		echo "✔  running at http://localhost"; \
 	fi
 
-## logs: tail container logs
-logs:
+## tail-logs: stream logs from k3s or docker compose
+tail-logs:
 	@if command -v kubectl >/dev/null 2>&1; then \
 		kubectl logs -n $(NAMESPACE) -l app=agent-ide -f; \
 	else \
 		docker compose -f agent-compose.yml logs -f; \
 	fi
 
-## down: stop and remove
-down:
+## stop-all: tear down k3s namespace or docker compose stack
+stop-all:
 	@if command -v kubectl >/dev/null 2>&1; then \
 		kubectl delete namespace $(NAMESPACE) --ignore-not-found; \
 	else \
@@ -64,4 +71,4 @@ down:
 	fi
 
 help:
-	@grep -E '^## ' Makefile | sed 's/## /  /'
+	@grep -E '^## ' Makefile | sed 's/## /  make /'
