@@ -1,11 +1,19 @@
 /**
  * Thin HTTP + WebSocket client for the agent-ide-backend server.
  * Falls back gracefully when the backend is not reachable.
+ *
+ * URL resolution:
+ *  1. window.AGENT_IDE_BACKEND  — explicit override (injected by container env)
+ *  2. Non-localhost hostname     — relative '' (k3s / production ingress routes
+ *                                  /api and /ws to backend on same host)
+ *  3. localhost                  — http://localhost:3001 (local dev)
  */
+const _win = typeof window !== 'undefined' ? (window as Window & { AGENT_IDE_BACKEND?: string }) : undefined;
+const _isLocal = typeof window !== 'undefined'
+    && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-export const BACKEND_URL = (typeof window !== 'undefined' && (window as Window & { AGENT_IDE_BACKEND?: string }).AGENT_IDE_BACKEND)
-    ? (window as Window & { AGENT_IDE_BACKEND?: string }).AGENT_IDE_BACKEND!
-    : 'http://localhost:3001';
+export const BACKEND_URL: string =
+    _win?.AGENT_IDE_BACKEND ?? (_isLocal ? 'http://localhost:3001' : '');
 
 export interface RunRequest {
     agentId:      string;
@@ -557,7 +565,9 @@ export function streamRun(
     onStep: (step: unknown) => void,
     onDone: (run: unknown, error?: string) => void,
 ): WebSocket {
-    const wsBase = BACKEND_URL.replace(/^http/, 'ws');
+    const wsBase = BACKEND_URL
+        ? BACKEND_URL.replace(/^http/, 'ws')
+        : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
     const ws = new WebSocket(`${wsBase}/ws/${runId}`);
 
     ws.onmessage = (event) => {

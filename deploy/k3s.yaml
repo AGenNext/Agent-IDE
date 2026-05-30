@@ -1,0 +1,190 @@
+# Agent IDE — single-file k3s deployment
+# Apply with:  kubectl apply -f deploy/k3s.yaml
+# Or use the one-command helper:  ./deploy.sh
+#
+# Traefik (k3s default ingress) routes:
+#   /api/*  → agent-ide-backend:3001
+#   /ws/*   → agent-ide-backend:3001
+#   /health → agent-ide-backend:3001
+#   /       → agent-ide-ide:3000
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-ide
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-ide-config
+  namespace: agent-ide
+data:
+  PORT: "3001"
+  NODE_ENV: "production"
+  ALLOW_SHELL: "false"
+  WORKSPACE_ROOT: "/data/workspace"
+  # Set OLLAMA_BASE_URL to enable local model support, e.g. http://ollama:11434/v1
+  OLLAMA_BASE_URL: ""
+  # Set OPENHANDS_URL to enable OpenHandS tool integration
+  OPENHANDS_URL: ""
+---
+# Create a real Secret with your keys before applying:
+#   kubectl -n agent-ide create secret generic agent-ide-secrets \
+#     --from-literal=ANTHROPIC_API_KEY=sk-ant-... \
+#     --from-literal=OPENAI_API_KEY=sk-... \
+#     --from-literal=BRAVE_API_KEY=... \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# Placeholder secret (no-op values) so the Deployment can start without keys.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-ide-secrets
+  namespace: agent-ide
+stringData:
+  ANTHROPIC_API_KEY: ""
+  OPENAI_API_KEY: ""
+  BRAVE_API_KEY: ""
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-ide-data
+  namespace: agent-ide
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-ide
+  namespace: agent-ide
+  labels:
+    app: agent-ide
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent-ide
+  template:
+    metadata:
+      labels:
+        app: agent-ide
+    spec:
+      containers:
+        - name: agent-ide
+          image: ghcr.io/agennext/agent-ide-combined:main
+          imagePullPolicy: Always
+          ports:
+            - name: ide
+              containerPort: 3000
+            - name: backend
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: agent-ide-config
+            - secretRef:
+                name: agent-ide-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: agent-ide-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-ide-ide
+  namespace: agent-ide
+spec:
+  selector:
+    app: agent-ide
+  ports:
+    - name: ide
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-ide-backend
+  namespace: agent-ide
+spec:
+  selector:
+    app: agent-ide
+  ports:
+    - name: backend
+      port: 3001
+      targetPort: 3001
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agent-ide
+  namespace: agent-ide
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    # WebSocket support
+    traefik.ingress.kubernetes.io/service.sticky.cookie: "false"
+    nginx.org/websocket-services: agent-ide-backend
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          # Backend routes first (longest prefix match)
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: agent-ide-backend
+                port:
+                  number: 3001
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: agent-ide-backend
+                port:
+                  number: 3001
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: agent-ide-backend
+                port:
+                  number: 3001
+          # IDE catches everything else
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: agent-ide-ide
+                port:
+                  number: 3000
