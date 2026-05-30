@@ -7,30 +7,25 @@ PROFILES   ?=
 
 PROFILE_FLAGS := $(foreach p,$(PROFILES),--profile $(p))
 
-.PHONY: all build-code build-container push-image deploy-app
+.PHONY: all build push deploy
 
-all: build-code build-container push-image deploy-app
+all: build push deploy
 
-build-code:
+build:
 	yarn --cwd packages/agent-ide-types build
 	yarn --cwd packages/agent-ide-backend build
 	yarn --cwd extensions/agent-ide-core build
 	yarn --cwd applications/browser-app build
-
-build-container:
-	@docker compose -f agent-compose.yml $(PROFILE_FLAGS) config --quiet
 	docker build -f Containerfile \
 		--tag $(IMAGE):$(TAG) \
 		--tag $(IMAGE):latest \
-		--label "org.opencontainers.image.revision=$(shell git rev-parse HEAD 2>/dev/null)" \
-		--label "org.opencontainers.image.created=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		.
 
-push-image:
+push:
 	docker push $(IMAGE):$(TAG)
 	docker push $(IMAGE):latest
 
-deploy-app:
+deploy:
 	@if command -v kubectl >/dev/null 2>&1; then \
 		bash deploy.sh $(TAG) $(foreach p,$(PROFILES),--profile $(p)) --namespace $(NAMESPACE); \
 	else \
