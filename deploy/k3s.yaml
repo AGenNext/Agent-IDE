@@ -78,7 +78,7 @@ spec:
     spec:
       containers:
         - name: agent-ide
-          image: ghcr.io/agennext/agent-ide-combined:main
+          image: ghcr.io/agennext/agent-ide:main
           imagePullPolicy: Always
           ports:
             - name: ide

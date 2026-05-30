@@ -6,7 +6,7 @@
 set -euo pipefail
 
 IMAGE_TAG="${1:-main}"
-IMAGE="ghcr.io/agennext/agent-ide-combined:${IMAGE_TAG}"
+IMAGE="ghcr.io/agennext/agent-ide:${IMAGE_TAG}"
 MANIFEST="$(dirname "$0")/deploy/k3s.yaml"
 
 # ── 1. Ensure k3s is installed ────────────────────────────────────────────────
@@ -35,7 +35,7 @@ echo "Using image: ${IMAGE}"
 
 # ── 3. Apply namespace + base resources ──────────────────────────────────────
 # Patch image tag before applying
-kubectl apply -f <(sed "s|ghcr.io/agennext/agent-ide-combined:main|${IMAGE}|g" "${MANIFEST}")
+kubectl apply -f <(sed "s|ghcr.io/agennext/agent-ide:main|${IMAGE}|g" "${MANIFEST}")
 
 # ── 4. Wait for rollout ───────────────────────────────────────────────────────
 echo "Waiting for rollout…"

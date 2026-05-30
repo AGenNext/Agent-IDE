@@ -9,11 +9,11 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_OWNER: ${{ github.repository_owner }}
+  IMAGE: ghcr.io/${{ github.repository_owner }}/agent-ide
 
 jobs:
-  build-backend:
-    name: Build backend image
+  build:
+    name: Build & push combined image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,121 +33,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (backend)
-        id: meta-backend
+      - name: Extract metadata
+        id: meta
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/agent-ide-backend
+          images: ${{ env.IMAGE }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build and push backend
-        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
-        with:
-          context: .
-          file: Containerfile.backend
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta-backend.outputs.tags }}
-          labels: ${{ steps.meta-backend.outputs.labels }}
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
-
-  build-ide:
-    name: Build IDE image
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (ide)
-        id: meta-ide
-        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/agent-ide
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-
-
-      - name: Build and push IDE
-        uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
-        with:
-          context: .
-          file: Containerfile.ide
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta-ide.outputs.tags }}
-          labels: ${{ steps.meta-ide.outputs.labels }}
-          cache-from: type=gha,scope=ide
-          cache-to: type=gha,mode=max,scope=ide
-
-  build-combined:
-    name: Build combined image
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
-
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (combined)
-        id: meta-combined
-        uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/agent-ide-combined
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-
-
-      - name: Build and push combined
+      - name: Build and push
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
         with:
           context: .
           file: Containerfile
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta-combined.outputs.tags }}
-          labels: ${{ steps.meta-combined.outputs.labels }}
-          cache-from: type=gha,scope=combined
-          cache-to: type=gha,mode=max,scope=combined
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     name: Rollout to Kubernetes
     runs-on: ubuntu-latest
-    needs: [build-backend, build-ide]
+    needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
     environment: production
 
@@ -167,18 +80,10 @@ jobs:
         id: tag
         run: echo "tag=sha-$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
 
-      - name: Rollout backend
+      - name: Rollout
         run: |
-          kubectl set image deployment/${{ vars.HELM_RELEASE }}-agent-ide-backend \
-            backend=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/agent-ide-backend:${{ steps.tag.outputs.tag }} \
-            -n ${{ vars.K8S_NAMESPACE || 'agent-ide' }}
-          kubectl rollout status deployment/${{ vars.HELM_RELEASE }}-agent-ide-backend \
-            -n ${{ vars.K8S_NAMESPACE || 'agent-ide' }} --timeout=5m
-
-      - name: Rollout IDE
-        run: |
-          kubectl set image deployment/${{ vars.HELM_RELEASE }}-agent-ide-ide \
-            ide=${{ env.REGISTRY }}/${{ env.IMAGE_OWNER }}/agent-ide:${{ steps.tag.outputs.tag }} \
-            -n ${{ vars.K8S_NAMESPACE || 'agent-ide' }}
-          kubectl rollout status deployment/${{ vars.HELM_RELEASE }}-agent-ide-ide \
-            -n ${{ vars.K8S_NAMESPACE || 'agent-ide' }} --timeout=5m
+          NAMESPACE="${{ vars.K8S_NAMESPACE || 'agent-ide' }}"
+          kubectl set image deployment/agent-ide \
+            agent-ide=${{ env.IMAGE }}:${{ steps.tag.outputs.tag }} \
+            -n "$NAMESPACE"
+          kubectl rollout status deployment/agent-ide -n "$NAMESPACE" --timeout=5m

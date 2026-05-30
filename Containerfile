@@ -1,9 +1,7 @@
 # ─── Builder ──────────────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
 
-# Native-module build tools required by some transitive deps (e.g. node-gyp)
 RUN apk add --no-cache python3 make g++
-
 RUN corepack enable
 
 WORKDIR /workspace
@@ -21,15 +19,15 @@ COPY extensions/    ./extensions/
 COPY applications/  ./applications/
 COPY tsconfig.base.json .
 
-RUN yarn --cwd packages/agent-ide-types build
-RUN yarn --cwd packages/agent-ide-backend build
-RUN yarn --cwd extensions/agent-ide-core build
-RUN yarn --cwd applications/browser-app build
+RUN yarn --cwd packages/agent-ide-types build && \
+    yarn --cwd packages/agent-ide-backend build && \
+    yarn --cwd extensions/agent-ide-core build && \
+    yarn --cwd applications/browser-app build
 
 # ─── Runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-alpine
 
-RUN corepack enable
+RUN apk add --no-cache tini && corepack enable
 
 WORKDIR /workspace
 
@@ -38,10 +36,16 @@ COPY --from=builder /workspace/packages                ./packages
 COPY --from=builder /workspace/extensions              ./extensions
 COPY --from=builder /workspace/applications            ./applications
 COPY --from=builder /workspace/package.json            ./package.json
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-ENV NODE_ENV=production
-# 3000 = Theia IDE  |  3001 = Agent backend API
+ENV NODE_ENV=production \
+    PORT=3001 \
+    WORKSPACE_ROOT=/data/workspace
+
+RUN mkdir -p /data/workspace
+
 EXPOSE 3000 3001
 
-# Start both the Theia frontend and the agent backend
-CMD ["sh", "-c", "node packages/agent-ide-backend/lib/server.js & yarn start"]
+ENTRYPOINT ["tini", "--"]
+CMD ["/usr/local/bin/docker-entrypoint.sh"]
