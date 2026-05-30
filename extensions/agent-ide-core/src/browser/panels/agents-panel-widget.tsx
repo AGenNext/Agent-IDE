@@ -3,6 +3,10 @@ import { injectable, postConstruct } from '@theia/core/shared/inversify';
 import { ReactWidget, AbstractViewContribution } from '@theia/core/lib/browser';
 import { CommandRegistry } from '@theia/core/lib/common';
 import { AgentsPanelCommand } from '../agent-ide-commands';
+import {
+    listAgentIdentities, createAgentIdentity, updateAgentIdentity, deleteAgentIdentity,
+    AgentIdentity, submitRun, streamRun, RunRequest,
+} from '../runtime/backend-client';
 
 type LLMModel = 'claude-opus-4-8' | 'claude-sonnet-4-6' | 'claude-haiku-4-5' | 'gpt-4o' | 'gpt-4o-mini' | 'gemini-1.5-pro';
 type FormSection = 'overview' | 'model' | 'prompt' | 'tools' | 'skills' | 'agents';
@@ -27,13 +31,6 @@ const AVAILABLE_TOOLS = [
     { id: 'shell',       name: 'Shell',          desc: 'Execute shell commands (sandboxed)' },
 ];
 
-const AVAILABLE_AGENTS = [
-    { id: 'research-agent',  name: 'ResearchAgent',  role: 'Web research & summarization' },
-    { id: 'coder-agent',     name: 'CoderAgent',     role: 'Code generation & review' },
-    { id: 'analyst-agent',   name: 'AnalystAgent',   role: 'Data analysis & visualization' },
-    { id: 'writer-agent',    name: 'WriterAgent',    role: 'Document drafting & editing' },
-    { id: 'reviewer-agent',  name: 'ReviewerAgent',  role: 'Quality assurance & critique' },
-];
 
 interface AgentModel {
     id: string;
@@ -72,10 +69,6 @@ interface SimResult {
     durationMs: number;
 }
 
-function approxTokens(text: string): number {
-    return Math.ceil(text.length / 3.8);
-}
-
 function makeApiKey(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     return 'sk-' + Array.from({ length: 48 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
@@ -96,38 +89,6 @@ function makeDefaultAgent(): AgentModel {
         tools: [],
         subAgentIds: [],
     };
-}
-
-function runDummySimulation(agent: AgentModel): SimResult {
-    const steps: SimStep[] = [];
-    const prompt = agent.systemPrompt;
-    const hasTools = agent.tools.length > 0;
-    const hasSubAgents = agent.subAgentIds.length > 0;
-
-    steps.push({ sequence: 1, type: 'thought', content: `Analyzing task with ${agent.model}. System prompt loaded (${approxTokens(prompt)} tokens). Planning execution strategy.`, inputTokens: approxTokens(prompt) + 80, outputTokens: 64, loopIndex: undefined });
-    if (hasTools) {
-        const tool = AVAILABLE_TOOLS.find(t => agent.tools.includes(t.id))!;
-        steps.push({ sequence: 2, type: 'action', content: `Invoking tool: ${tool?.name ?? agent.tools[0]}`, toolName: tool?.name, toolInput: { query: 'sample input for task execution' }, inputTokens: 120, outputTokens: 40 });
-        steps.push({ sequence: 3, type: 'observation', content: `Tool returned 3 relevant results. Summarizing findings for downstream processing.`, inputTokens: 200, outputTokens: 90 });
-    }
-    if (hasSubAgents) {
-        const subId = agent.subAgentIds[0];
-        const sub = AVAILABLE_AGENTS.find(a => a.id === subId);
-        steps.push({ sequence: steps.length + 1, type: 'action', content: `Delegating sub-task to ${sub?.name ?? subId} (${sub?.role ?? 'specialist'})`, inputTokens: 150, outputTokens: 55 });
-        steps.push({ sequence: steps.length + 1, type: 'observation', content: `${sub?.name ?? subId} completed sub-task. Result integrated into main context.`, inputTokens: 310, outputTokens: 120 });
-    }
-    if (hasTools && agent.tools.length >= 2) {
-        steps.push({ sequence: steps.length + 1, type: 'thought', content: 'Intermediate result requires refinement. Running verification loop.', inputTokens: 180, outputTokens: 70, loopIndex: 1 });
-        steps.push({ sequence: steps.length + 1, type: 'action', content: 'Re-executing tool with refined query', toolName: agent.tools[1], toolInput: { query: 'refined query', iteration: 2 }, inputTokens: 130, outputTokens: 50, loopIndex: 1 });
-    }
-    steps.push({ sequence: steps.length + 1, type: 'result', content: `Task completed. Produced structured output with ${agent.skills.length} skill(s) applied. Ready for artifact export.`, inputTokens: 250, outputTokens: 180 });
-
-    const modelInfo = MODEL_OPTIONS.find(m => m.value === agent.model)!;
-    const totalIn = steps.reduce((s, st) => s + st.inputTokens, 0);
-    const totalOut = steps.reduce((s, st) => s + st.outputTokens, 0);
-    const cost = ((totalIn + totalOut) / 1000) * modelInfo.costPer1k;
-
-    return { agentId: agent.id, agentName: agent.name, model: agent.model, steps, totalInputTokens: totalIn, totalOutputTokens: totalOut, estimatedCostUsd: cost, durationMs: 800 + steps.length * 220 + Math.random() * 400 };
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -291,6 +252,9 @@ function SkillsSection({ agent, onChange }: { agent: AgentModel; onChange: (a: A
 }
 
 function AgentsSection({ agent, onChange }: { agent: AgentModel; onChange: (a: AgentModel) => void }) {
+    const [peers, setPeers] = React.useState<AgentIdentity[]>([]);
+    React.useEffect(() => { listAgentIdentities().then(setPeers).catch(() => {}); }, []);
+    const available = peers.filter(p => p.id !== agent.id);
     const toggle = (id: string) => {
         const next = agent.subAgentIds.includes(id)
             ? agent.subAgentIds.filter(x => x !== id)
@@ -300,12 +264,13 @@ function AgentsSection({ agent, onChange }: { agent: AgentModel; onChange: (a: A
     return (
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Select sub-agents this agent can delegate to:</div>
-            {AVAILABLE_AGENTS.map(a => (
+            {available.length === 0 && <div style={{ fontSize: 12, color: '#444' }}>No other agents yet.</div>}
+            {available.map(a => (
                 <label key={a.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '8px 10px', background: agent.subAgentIds.includes(a.id) ? '#1a1a2a' : '#141414', borderRadius: 4, border: `1px solid ${agent.subAgentIds.includes(a.id) ? '#2a2a4a' : '#222'}` }}>
                     <input type="checkbox" checked={agent.subAgentIds.includes(a.id)} onChange={() => toggle(a.id)} style={{ marginTop: 2 }} />
                     <div>
                         <div style={{ fontSize: 12, fontWeight: 600, color: agent.subAgentIds.includes(a.id) ? '#a070ff' : '#ccc' }}>{a.name}</div>
-                        <div style={{ fontSize: 11, color: '#666' }}>{a.role}</div>
+                        <div style={{ fontSize: 11, color: '#666' }}>{a.description}</div>
                     </div>
                 </label>
             ))}
@@ -379,11 +344,6 @@ function SimResultPanel({ result }: { result: SimResult }) {
     );
 }
 
-const DEMO_AGENTS: AgentModel[] = [
-    { id: 'research-agent-01', name: 'ResearchAgent', description: 'Web research and summarization', model: 'claude-opus-4-8', apiKey: makeApiKey(), temperature: 0.5, maxTokens: 8192, systemPrompt: 'You are a research assistant. Search the web, synthesize findings, and produce concise summaries with citations.', fewShotExamples: '', skills: ['summarize', 'cite_sources', 'web_search'], tools: ['browser', 'pdf_reader'], subAgentIds: [] },
-    { id: 'coder-agent-01', name: 'CoderAgent', description: 'Code generation and review', model: 'claude-sonnet-4-6', apiKey: makeApiKey(), temperature: 0.2, maxTokens: 16384, systemPrompt: 'You are an expert software engineer. Write clean, tested, production-ready code.', fewShotExamples: '', skills: ['generate_code', 'review', 'debug'], tools: ['code_exec', 'file_rw', 'shell'], subAgentIds: ['research-agent'] },
-];
-
 function AgentSidebar({ agents, selected, onSelect, onNew }: { agents: AgentModel[]; selected: string; onSelect: (id: string) => void; onNew: () => void }) {
     return (
         <div style={{ width: 160, borderRight: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -404,54 +364,184 @@ function AgentSidebar({ agents, selected, onSelect, onNew }: { agents: AgentMode
     );
 }
 
+function identityToModel(a: AgentIdentity): AgentModel {
+    return {
+        id: a.id, name: a.name, description: a.description,
+        model: (a.model as LLMModel) || 'claude-sonnet-4-6',
+        apiKey: '', temperature: 0.7, maxTokens: 4096,
+        systemPrompt: 'You are a helpful assistant.',
+        fewShotExamples: '',
+        skills: a.capabilities ?? [],
+        tools: [],
+        subAgentIds: [],
+    };
+}
+
 function AgentModelingView() {
-    const [agents, setAgents] = React.useState<AgentModel[]>(DEMO_AGENTS);
-    const [selectedId, setSelectedId] = React.useState(DEMO_AGENTS[0].id);
+    const [agents, setAgents] = React.useState<AgentModel[]>([]);
+    const [selectedId, setSelectedId] = React.useState('');
     const [section, setSection] = React.useState<FormSection>('overview');
     const [simResult, setSimResult] = React.useState<SimResult | null>(null);
-    const [simulating, setSimulating] = React.useState(false);
+    const [running, setRunning] = React.useState(false);
+    const [loading, setLoading] = React.useState(true);
+    const [error, setError] = React.useState('');
+    const [task, setTask] = React.useState('Describe what you can do.');
+    const wsRef = React.useRef<WebSocket | null>(null);
 
-    const agent = agents.find(a => a.id === selectedId)!;
-    const updateAgent = (updated: AgentModel) => setAgents(ags => ags.map(a => a.id === updated.id ? updated : a));
+    // Load agents from backend
+    React.useEffect(() => {
+        listAgentIdentities()
+            .then(list => {
+                const models = list.map(identityToModel);
+                setAgents(models);
+                if (models.length > 0) setSelectedId(models[0].id);
+            })
+            .catch(() => {
+                // fallback to local empty state if backend unreachable
+                setError('Backend unreachable — changes will not persist.');
+            })
+            .finally(() => setLoading(false));
+    }, []);
 
-    const addNew = () => {
-        const n = makeDefaultAgent();
-        setAgents(ags => [...ags, n]);
-        setSelectedId(n.id);
-        setSection('overview');
+    const agent = agents.find(a => a.id === selectedId);
+
+    const updateAgent = async (updated: AgentModel) => {
+        setAgents(ags => ags.map(a => a.id === updated.id ? updated : a));
+        updateAgentIdentity(updated.id, {
+            name: updated.name, description: updated.description,
+            model: updated.model, capabilities: updated.skills,
+        }).catch(() => {/* silent — local state already updated */});
+    };
+
+    const addNew = async () => {
+        try {
+            const identity = await createAgentIdentity({ name: 'New Agent', description: '', model: 'claude-sonnet-4-6' });
+            const m = identityToModel(identity);
+            setAgents(ags => [...ags, m]);
+            setSelectedId(m.id);
+            setSection('overview');
+            setSimResult(null);
+        } catch {
+            const m = makeDefaultAgent();
+            setAgents(ags => [...ags, m]);
+            setSelectedId(m.id);
+        }
+    };
+
+    const removeAgent = async (id: string) => {
+        deleteAgentIdentity(id).catch(() => {});
+        const remaining = agents.filter(a => a.id !== id);
+        setAgents(remaining);
+        setSelectedId(remaining[0]?.id ?? '');
         setSimResult(null);
     };
 
-    const simulate = () => {
-        setSimulating(true);
+    const runAgent = async () => {
+        if (!agent) return;
+        setRunning(true);
         setSimResult(null);
-        setTimeout(() => { setSimResult(runDummySimulation(agent)); setSimulating(false); }, 400);
+        wsRef.current?.close();
+
+        try {
+            const req: RunRequest = {
+                agentId: agent.id, agentName: agent.name,
+                model: agent.model, systemPrompt: agent.systemPrompt,
+                task, tools: agent.tools, apiKey: agent.apiKey,
+                temperature: agent.temperature, maxTokens: agent.maxTokens,
+            };
+            const { runId } = await submitRun(req);
+            const steps: SimStep[] = [];
+
+            wsRef.current = streamRun(
+                runId,
+                (step: unknown) => {
+                    const s = step as { sequence: number; type: string; content: string; toolName?: string; toolInput?: Record<string, unknown>; inputTokens: number; outputTokens: number };
+                    steps.push({
+                        sequence: s.sequence, type: s.type as SimStep['type'],
+                        content: s.content, toolName: s.toolName, toolInput: s.toolInput,
+                        inputTokens: s.inputTokens ?? 0, outputTokens: s.outputTokens ?? 0,
+                    });
+                    setSimResult({
+                        agentId: agent.id, agentName: agent.name, model: agent.model,
+                        steps: [...steps],
+                        totalInputTokens: steps.reduce((s, st) => s + st.inputTokens, 0),
+                        totalOutputTokens: steps.reduce((s, st) => s + st.outputTokens, 0),
+                        estimatedCostUsd: 0, durationMs: 0,
+                    });
+                },
+                (run: unknown, err?: string) => {
+                    setRunning(false);
+                    if (err) setError(err);
+                    const r = run as { totalInputTokens?: number; totalOutputTokens?: number; estimatedCostUsd?: number; durationMs?: number } | null;
+                    if (r) {
+                        setSimResult(prev => prev ? {
+                            ...prev,
+                            totalInputTokens: r.totalInputTokens ?? prev.totalInputTokens,
+                            totalOutputTokens: r.totalOutputTokens ?? prev.totalOutputTokens,
+                            estimatedCostUsd: r.estimatedCostUsd ?? 0,
+                            durationMs: r.durationMs ?? 0,
+                        } : prev);
+                    }
+                },
+            );
+        } catch (e) {
+            setError(String(e));
+            setRunning(false);
+        }
     };
+
+    if (loading) {
+        return <div style={{ padding: 24, color: '#555', fontSize: 13 }}>Loading agents…</div>;
+    }
+
+    if (!agent && agents.length === 0) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, color: '#555' }}>
+                {error && <div style={{ color: '#e06060', fontSize: 11, marginBottom: 4 }}>{error}</div>}
+                <div style={{ fontSize: 13 }}>No agents yet</div>
+                <button onClick={addNew} style={{ padding: '6px 16px', background: '#1e3a1e', border: '1px solid #3a6a3a', color: '#60d060', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>+ New Agent</button>
+            </div>
+        );
+    }
 
     return (
         <div style={{ display: 'flex', height: '100%', background: '#111', color: '#ccc', fontFamily: 'var(--theia-ui-font-family, sans-serif)' }}>
             <AgentSidebar agents={agents} selected={selectedId} onSelect={id => { setSelectedId(id); setSimResult(null); }} onNew={addNew} />
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                <SectionTabs active={section} onChange={setSection} />
-                <div style={{ flex: 1, overflow: 'auto' }}>
-                    {section === 'overview' && <OverviewSection agent={agent} onChange={updateAgent} />}
-                    {section === 'model'    && <ModelSection    agent={agent} onChange={updateAgent} />}
-                    {section === 'prompt'   && <PromptSection   agent={agent} onChange={updateAgent} />}
-                    {section === 'tools'    && <ToolsSection    agent={agent} onChange={updateAgent} />}
-                    {section === 'skills'   && <SkillsSection   agent={agent} onChange={updateAgent} />}
-                    {section === 'agents'   && <AgentsSection   agent={agent} onChange={updateAgent} />}
+            {agent && (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <SectionTabs active={section} onChange={setSection} />
+                    {error && <div style={{ padding: '4px 12px', background: '#2a1010', color: '#e06060', fontSize: 11 }}>{error}</div>}
+                    <div style={{ flex: 1, overflow: 'auto' }}>
+                        {section === 'overview' && <OverviewSection agent={agent} onChange={updateAgent} />}
+                        {section === 'model'    && <ModelSection    agent={agent} onChange={updateAgent} />}
+                        {section === 'prompt'   && <PromptSection   agent={agent} onChange={updateAgent} />}
+                        {section === 'tools'    && <ToolsSection    agent={agent} onChange={updateAgent} />}
+                        {section === 'skills'   && <SkillsSection   agent={agent} onChange={updateAgent} />}
+                        {section === 'agents'   && <AgentsSection   agent={agent} onChange={updateAgent} />}
+                    </div>
+                    <div style={{ borderTop: '1px solid #1e1e1e', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <input
+                            value={task} onChange={e => setTask(e.target.value)}
+                            placeholder="Task for this agent…"
+                            style={{ width: '100%', background: '#1a1a1a', border: '1px solid #333', color: '#ccc', padding: '5px 8px', borderRadius: 4, fontSize: 12, boxSizing: 'border-box' }}
+                        />
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <button onClick={runAgent} disabled={running}
+                                style={{ padding: '5px 14px', background: running ? '#1a2a1a' : '#1e3a1e', border: '1px solid #3a6a3a', color: running ? '#555' : '#60d060', borderRadius: 4, cursor: running ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600 }}>
+                                {running ? '⏳ Running…' : '▶ Run'}
+                            </button>
+                            <button onClick={() => removeAgent(agent.id)}
+                                style={{ padding: '5px 10px', background: 'transparent', border: '1px solid #3a2020', color: '#a04040', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}>
+                                Delete
+                            </button>
+                            <span style={{ fontSize: 11, color: '#444' }}>{agent.tools.length} tool(s) · {agent.skills.length} skill(s)</span>
+                        </div>
+                    </div>
                 </div>
-                <div style={{ borderTop: '1px solid #1e1e1e', padding: '8px 12px', display: 'flex', gap: 8 }}>
-                    <button onClick={simulate} disabled={simulating}
-                        style={{ padding: '5px 14px', background: simulating ? '#1a2a1a' : '#1e3a1e', border: '1px solid #3a6a3a', color: simulating ? '#555' : '#60d060', borderRadius: 4, cursor: simulating ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600 }}>
-                        {simulating ? 'Simulating…' : '▶ Run Simulation'}
-                    </button>
-                    <span style={{ fontSize: 11, color: '#444', alignSelf: 'center' }}>{agent.tools.length} tool(s) · {agent.skills.length} skill(s) · {agent.subAgentIds.length} sub-agent(s)</span>
-                </div>
-            </div>
+            )}
             {simResult && (
                 <div style={{ width: 320, borderLeft: '1px solid #1e1e1e', overflow: 'auto', background: '#0d0d0d' }}>
-                    <div style={{ padding: '8px 12px', borderBottom: '1px solid #1e1e1e', fontSize: 11, color: '#888', fontWeight: 600 }}>SIMULATION RESULT</div>
+                    <div style={{ padding: '8px 12px', borderBottom: '1px solid #1e1e1e', fontSize: 11, color: '#888', fontWeight: 600 }}>RUN OUTPUT</div>
                     <SimResultPanel result={simResult} />
                 </div>
             )}
