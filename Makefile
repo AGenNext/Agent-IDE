@@ -7,10 +7,10 @@ PROFILES   ?=
 
 PROFILE_FLAGS := $(foreach p,$(PROFILES),--profile $(p))
 
-.PHONY: all build-code build-container push-image deploy-cluster \
-        tail-logs stop-cluster help
+.PHONY: all build-code build-container push-image deploy-app \
+        tail-logs stop-app help
 
-all: build-code build-container push-image deploy-cluster
+all: build-code build-container push-image deploy-app
 
 build-code:                  ## compile TypeScript (all packages)
 	@echo "▶  build-code..."
@@ -37,10 +37,10 @@ push-image:                  ## push image to GHCR
 	docker push $(IMAGE):latest
 	@echo "✔  pushed"
 
-deploy-cluster:              ## deploy to k3s (falls back to docker compose)
+deploy-app:                  ## deploy to k3s (falls back to docker compose)
 	@if command -v k3s >/dev/null 2>&1 || command -v kubectl >/dev/null 2>&1; then \
 		echo "▶  deploy-cluster → k3s ($(NAMESPACE))"; \
-		bash deploy.sh $(TAG) $(foreach p,$(PROFILES),--profile $(p)) --namespace $(NAMESPACE); \
+		bash deploy.sh $(TAG) $(foreach p,$(PROFILES),--profile $(p)) --namespace $(NAMESPACE) ; \
 	else \
 		echo "▶  deploy-cluster → docker compose"; \
 		TAG=$(TAG) docker compose -f agent-compose.yml $(PROFILE_FLAGS) up -d; \
@@ -54,7 +54,7 @@ tail-logs:                   ## stream logs (k3s or docker)
 		docker compose -f agent-compose.yml logs -f; \
 	fi
 
-stop-cluster:                ## tear down k3s namespace or compose stack
+stop-app:                    ## tear down k3s namespace or compose stack
 	@if command -v kubectl >/dev/null 2>&1; then \
 		kubectl delete namespace $(NAMESPACE) --ignore-not-found; \
 	else \
