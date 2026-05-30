@@ -7,17 +7,26 @@ PROFILES   ?=
 
 PROFILE_FLAGS := $(foreach p,$(PROFILES),--profile $(p))
 
-.PHONY: all compose build push deploy logs down help
+.PHONY: all build-code build-image push-image deploy-cluster \
+        validate-compose tail-logs stop-cluster help
 
-all: compose build push deploy   ## compose → build → push → deploy
+all: validate-compose build-code build-image push-image deploy-cluster
 
-compose:                         ## validate agent-compose.yml
-	@echo "▶  compose..."
+validate-compose:            ## validate agent-compose.yml
+	@echo "▶  validate-compose..."
 	docker compose -f agent-compose.yml $(PROFILE_FLAGS) config --quiet
 	@echo "✔  OK"
 
-build:                           ## docker build → :SHA + :latest
-	@echo "▶  build $(IMAGE):$(TAG)..."
+build-code:                  ## compile TypeScript (all packages)
+	@echo "▶  build-code..."
+	yarn --cwd packages/agent-ide-types build
+	yarn --cwd packages/agent-ide-backend build
+	yarn --cwd extensions/agent-ide-core build
+	yarn --cwd applications/browser-app build
+	@echo "✔  build-code done"
+
+build-image:                 ## docker build → :SHA + :latest
+	@echo "▶  build-image $(IMAGE):$(TAG)..."
 	docker build -f Containerfile \
 		--tag $(IMAGE):$(TAG) \
 		--tag $(IMAGE):latest \
@@ -26,30 +35,30 @@ build:                           ## docker build → :SHA + :latest
 		.
 	@echo "✔  $(IMAGE):$(TAG)"
 
-push:                            ## docker push to GHCR
-	@echo "▶  push $(IMAGE):$(TAG)..."
+push-image:                  ## push image to GHCR
+	@echo "▶  push-image $(IMAGE):$(TAG)..."
 	docker push $(IMAGE):$(TAG)
 	docker push $(IMAGE):latest
 	@echo "✔  pushed"
 
-deploy:                          ## deploy to k3s (falls back to docker compose)
+deploy-cluster:              ## deploy to k3s (falls back to docker compose)
 	@if command -v k3s >/dev/null 2>&1 || command -v kubectl >/dev/null 2>&1; then \
-		echo "▶  deploy → k3s ($(NAMESPACE))"; \
+		echo "▶  deploy-cluster → k3s ($(NAMESPACE))"; \
 		bash deploy.sh $(TAG) $(foreach p,$(PROFILES),--profile $(p)) --namespace $(NAMESPACE); \
 	else \
-		echo "▶  deploy → docker compose"; \
+		echo "▶  deploy-cluster → docker compose"; \
 		TAG=$(TAG) docker compose -f agent-compose.yml $(PROFILE_FLAGS) up -d; \
 		echo "✔  http://localhost"; \
 	fi
 
-logs:                            ## tail logs
+tail-logs:                   ## stream logs (k3s or docker)
 	@if command -v kubectl >/dev/null 2>&1; then \
 		kubectl logs -n $(NAMESPACE) -l app=agent-ide -f; \
 	else \
 		docker compose -f agent-compose.yml logs -f; \
 	fi
 
-down:                            ## stop and remove
+stop-cluster:                ## tear down k3s namespace or compose stack
 	@if command -v kubectl >/dev/null 2>&1; then \
 		kubectl delete namespace $(NAMESPACE) --ignore-not-found; \
 	else \
@@ -57,4 +66,4 @@ down:                            ## stop and remove
 	fi
 
 help:
-	@grep -E '##' Makefile | grep -v grep | sed 's/:.*## /\t/'
+	@grep -E '^[a-z-]+:' Makefile | grep '##' | sed 's/:.*## /\t/'
