@@ -35,6 +35,7 @@ mod compute;
 mod storage;
 mod govgraph;
 mod computekube;
+mod goals;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -170,6 +171,8 @@ async fn main() {
         .nest("/api", routes::govgraph::router(state.clone()))
         // ComputeKube — governed k8s job execution for graph nodes
         .nest("/api", routes::computekube::router(state.clone()))
+        // Goals — purpose-driven agents; alignment → activation → impact → loop
+        .nest("/api", routes::goals::router(state.clone()))
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
