@@ -33,6 +33,20 @@ impl AgentIdentity {
         Self::from_seed(&seed)
     }
 
+    /// Build a minimal AccountabilityRecord-compatible identity from a known DID.
+    /// Used when the caller's full keypair is not available (e.g. platform-internal events).
+    /// Signatures from these identities are placeholder — production uses mTLS / HSM.
+    pub fn from_did(did: &str) -> Self {
+        // Derive a deterministic seed from the DID string so the same DID always
+        // produces the same key (weak — production must use HSM-backed keys).
+        let mut seed = [0u8; 32];
+        for (i, b) in did.as_bytes().iter().enumerate().take(32) {
+            seed[i] = *b;
+        }
+        let (sk, pk) = Self::ed25519_keygen(&seed);
+        Self { did: did.to_string(), public_key: pk, secret_key: sk }
+    }
+
     /// Load from environment variable AUTONOMYX_IDENTITY_KEY (hex-encoded seed).
     pub fn from_env() -> Option<Self> {
         let hex = std::env::var("AUTONOMYX_IDENTITY_KEY").ok()?;
