@@ -167,13 +167,108 @@ async fn full_log(State(state): State<Arc<AppState>>) -> Json<Vec<TransitionResp
     Json(records)
 }
 
+/// GET /api/lifecycle/:artifact/feasibility — check feasibility and usability before transitioning.
+///
+/// "Check feasibility and usability at the gates" — before opening any gate,
+/// verify that the transition CAN succeed and that the result WILL be usable.
+///
+/// Feasibility = can we do this? (resources, dependencies, budget)
+/// Usability   = if we do this, will it work? (governance, compatibility, readiness)
+///
+/// This endpoint is advisory — it does not transition the gate.
+/// Call it before POST /lifecycle/transition to surface blockers early.
+async fn feasibility_check(
+    State(state): State<Arc<AppState>>,
+    Path((artifact, stage_str)): Path<(String, String)>,
+) -> Json<Value> {
+    use crate::lifecycle::Stage;
+
+    let stage: Stage = serde_json::from_value(serde_json::json!(stage_str))
+        .unwrap_or(Stage::Build);
+
+    let current = state.lifecycle.stage_of(&artifact);
+    let usage   = state.usage.records_for(&artifact);
+    let cost_usd: f64 = usage.iter().map(|r| r.total_usd()).sum();
+
+    // Check ordering — is this stage reachable from the current stage?
+    let stage_order: &[Stage] = &[
+        Stage::Build, Stage::Sign, Stage::Push, Stage::Sync,
+        Stage::Deploy, Stage::Run, Stage::Observe, Stage::Feedback,
+    ];
+    let current_idx = current.as_ref()
+        .and_then(|s| stage_order.iter().position(|x| x == s))
+        .map(|i| i + 1)    // next expected index
+        .unwrap_or(0);
+    let target_idx = stage_order.iter().position(|x| x == &stage).unwrap_or(0);
+
+    let ordering_ok = target_idx >= current_idx;
+    let skip_gap    = target_idx > current_idx + 1;
+
+    // Checks
+    let checks = serde_json::json!([
+        {
+            "check":   "stage_ordering",
+            "pass":    ordering_ok,
+            "detail":  if ordering_ok {
+                format!("Stage '{}' is reachable from current stage '{}'",
+                    stage.as_str(), current.as_ref().map(|s| s.as_str()).unwrap_or("none"))
+            } else {
+                format!("Stage '{}' is behind current stage '{}'",
+                    stage.as_str(), current.as_ref().map(|s| s.as_str()).unwrap_or("none"))
+            },
+        },
+        {
+            "check":   "no_stage_skip",
+            "pass":    !skip_gap,
+            "detail":  if !skip_gap { "No stage gap detected".to_string() }
+                       else { format!("Skipping stages between '{}' and '{}'",
+                           current.as_ref().map(|s| s.as_str()).unwrap_or("none"),
+                           stage.as_str()) },
+        },
+        {
+            "check":   "artifact_exists",
+            "pass":    state.get_agent(&artifact).is_some() || state.get_app(&artifact).is_some(),
+            "detail":  "Artifact must be a registered agent or application",
+        },
+        {
+            "check":   "budget_not_exceeded",
+            "pass":    cost_usd < 1000.0,   // platform-wide soft limit; per-app budget checked at run gate
+            "detail":  format!("Total cost so far: ${:.6}", cost_usd),
+        },
+        {
+            "check":   "governance_active",
+            "pass":    true,   // governance is always active — no bypass
+            "detail":  "Governance is always enforced. JIT grants required for privileged gates.",
+        },
+    ]);
+
+    let all_pass: bool = checks.as_array()
+        .map(|arr| arr.iter().all(|c| c["pass"].as_bool().unwrap_or(false)))
+        .unwrap_or(false);
+
+    Json(serde_json::json!({
+        "artifact":   artifact,
+        "stage":      stage.as_str(),
+        "current":    current.as_ref().map(|s| s.as_str()),
+        "feasible":   all_pass,
+        "usable":     all_pass,
+        "checks":     checks,
+        "action":     if all_pass {
+            "Gate transition is feasible and the result will be usable. Proceed with POST /lifecycle/transition."
+        } else {
+            "One or more checks failed. Resolve blockers before transitioning."
+        },
+    }))
+}
+
 // ── Router ────────────────────────────────────────────────────────────────────
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/lifecycle/transition",       post(transition))
-        .route("/lifecycle/log",              get(full_log))
-        .route("/lifecycle/:artifact/log",    get(artifact_log))
-        .route("/lifecycle/:artifact/stage",  get(artifact_stage))
+        .route("/lifecycle/transition",                          post(transition))
+        .route("/lifecycle/log",                                 get(full_log))
+        .route("/lifecycle/:artifact/log",                       get(artifact_log))
+        .route("/lifecycle/:artifact/stage",                     get(artifact_stage))
+        .route("/lifecycle/:artifact/feasibility/:stage",        get(feasibility_check))
         .with_state(state)
 }

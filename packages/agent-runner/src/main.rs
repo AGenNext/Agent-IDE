@@ -155,6 +155,10 @@ async fn main() {
         .nest("/ws", routes::ws::router(state.clone()))
         // MCP server — platform as AI tool
         .nest("/", routes::mcp::router(state.clone()))
+        // AIP — Agent Internet Protocol (agent-to-agent, DID + Ed25519)
+        .nest("/api", routes::aip::router(state.clone()))
+        // Feedback gate — closes the loop, every run produces signal
+        .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
         .layer(middleware::from_fn({

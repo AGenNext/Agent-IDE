@@ -13,3 +13,5 @@ pub mod platform;
 pub mod apps;
 pub mod onboarding;
 pub mod mcp;
+pub mod aip;
+pub mod feedback;
