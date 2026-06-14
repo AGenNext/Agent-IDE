@@ -1,0 +1,57 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/agennext/agent-ide
+  tag: main
+  pullPolicy: Always
+
+# Phase 1 = Node backend, Phase 2 = Rust agent-runner
+runtimePhase: "1"
+
+service:
+  ide:
+    port: 3000
+  backend:
+    port: 3001
+
+ingress:
+  enabled: true
+  className: traefik
+  host: ide.agennext.com
+  tls: true
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""   # use cluster default
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+env:
+  NODE_ENV: production
+  WORKSPACE_ROOT: /data/workspace
+
+secrets:
+  # Set via --set or Helm secrets manager
+  anthropicApiKey: ""
+  openaiApiKey: ""
+  transferApiKey: ""
+
+# KubeContainer CRD (set enabled: true if operator is installed)
+kubeContainer:
+  enabled: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70

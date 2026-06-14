@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-ide
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: agent-ide
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: ide
+      port: 3000
+      targetPort: ide
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-backend
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: agent-ide
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: backend
+      port: 3001
+      targetPort: backend
+    - name: ws
+      port: 3001
+      targetPort: backend
