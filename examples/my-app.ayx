@@ -1,0 +1,58 @@
+// my-app.ayx — Application declaration (the theory)
+// "Application is the product" — declare it here, the platform makes it real.
+// openautonomyx.com
+
+application MyApp {
+  version "1.0.0"
+  description "The platform where anyone can build their next"
+
+  // Governance — JIT access, no standing permissions
+  governance {
+    max_grant_ttl 3600
+    require_mfa   false
+    audit_all     true
+    federation    "open"
+  }
+
+  // Intelligence — any LLM, any cloud
+  intelligence {
+    provider "anthropic"
+    model    "claude-opus-4-8"
+    mode     adaptive
+  }
+
+  // Agents that compose this application
+  agents {
+    agent Researcher {
+      role "research and synthesise information"
+      mode chain
+      tools ["web_search", "summarise"]
+    }
+
+    agent Builder {
+      role "write and test code"
+      mode adaptive
+      tools ["code_exec", "file_write", "test_run"]
+    }
+
+    agent Coordinator {
+      role "orchestrate researcher and builder"
+      mode orchestrator
+      delegates [Researcher, Builder]
+    }
+  }
+
+  // Lifecycle — gates are law
+  lifecycle {
+    gate build  { oath "bom_present" }
+    gate sign   { oath "signature_valid" }
+    gate deploy { oath "governance_satisfied" }
+    gate run    { oath "budget_available" }
+  }
+
+  // Usage budget — freedom not free; fair and transparent
+  budget {
+    monthly_usd 50.00
+    on_exceed   "pause"
+  }
+}

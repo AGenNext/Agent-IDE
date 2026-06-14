@@ -62,6 +62,35 @@ pub struct Peer {
     pub region:    Option<String>,
 }
 
+// ── Application ───────────────────────────────────────────────────────────────
+// "Application is the product" — the declared .ayx artifact the platform makes real.
+// An app is a named, versioned, governed collection of agents + workflows.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Application {
+    pub id:          String,
+    pub owner_id:    String,
+    pub name:        String,
+    pub description: String,
+    pub version:     String,
+    pub did:         Option<String>,   // did:autonomyx:<pubkey> — assigned at build gate
+    pub status:      AppStatus,
+    pub agents:      Vec<String>,      // agent IDs bound to this app
+    pub ayx_source:  Option<String>,   // .ayx declaration source (theory)
+    pub created_at:  DateTime<Utc>,
+    pub updated_at:  DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AppStatus {
+    Draft,     // declared, not yet built
+    Building,  // build gate open
+    Live,      // deployed and running
+    Paused,    // suspended
+    Retired,   // end-of-life
+}
+
 // ── AppState — Autonomyx Runtime Core ────────────────────────────────────────
 // Single shared state; native everywhere (home server, edge, k8s, embedded).
 // ConfigDB (SurrealDB) is the live config store — all other state is ephemeral.
@@ -70,6 +99,7 @@ pub struct AppState {
     pub agents:  RwLock<HashMap<String, AgentIdentity>>,
     pub runs:    RwLock<HashMap<String, AgentRun>>,
     pub peers:   RwLock<HashMap<String, Peer>>,
+    pub apps:    RwLock<HashMap<String, Application>>,
     // WebSocket event sinks: run_id → tokio broadcast senders
     pub ws_sinks: RwLock<HashMap<String, Vec<tokio::sync::broadcast::Sender<String>>>>,
     // ConfigDB handle — SurrealDB (embedded or remote)
@@ -105,6 +135,7 @@ impl AppState {
             agents:     RwLock::new(agents),
             runs:       RwLock::new(HashMap::new()),
             peers:      RwLock::new(HashMap::new()),
+            apps:       RwLock::new(HashMap::new()),
             ws_sinks:   RwLock::new(HashMap::new()),
             config,
             lifecycle:  LifecycleRegistry::new(),
@@ -215,6 +246,48 @@ impl AppState {
         if let Some(p) = self.peers.write().unwrap().get_mut(id) {
             p.status = status.into();
             if status == "online" { p.last_seen = Some(Utc::now()); }
+        }
+    }
+
+    pub fn create_app(&self, owner_id: &str, name: &str, description: &str, version: &str, ayx_source: Option<&str>) -> Application {
+        let id = format!("app_{}", Uuid::new_v4().simple());
+        let app = Application {
+            id: id.clone(), owner_id: owner_id.into(),
+            name: name.into(), description: description.into(),
+            version: version.into(), did: None,
+            status: AppStatus::Draft,
+            agents: vec![],
+            ayx_source: ayx_source.map(|s| s.into()),
+            created_at: Utc::now(), updated_at: Utc::now(),
+        };
+        self.apps.write().unwrap().insert(id, app.clone());
+        app
+    }
+
+    pub fn get_app(&self, id: &str) -> Option<Application> {
+        self.apps.read().unwrap().get(id).cloned()
+    }
+
+    pub fn list_apps(&self) -> Vec<Application> {
+        self.apps.read().unwrap().values().cloned().collect()
+    }
+
+    pub fn activate_app(&self, id: &str, did: &str) {
+        let mut apps = self.apps.write().unwrap();
+        if let Some(app) = apps.get_mut(id) {
+            app.did = Some(did.into());
+            app.status = AppStatus::Live;
+            app.updated_at = Utc::now();
+        }
+    }
+
+    pub fn bind_agent_to_app(&self, app_id: &str, agent_id: &str) {
+        let mut apps = self.apps.write().unwrap();
+        if let Some(app) = apps.get_mut(app_id) {
+            if !app.agents.contains(&agent_id.to_string()) {
+                app.agents.push(agent_id.into());
+                app.updated_at = Utc::now();
+            }
         }
     }
 }

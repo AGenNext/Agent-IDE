@@ -10,3 +10,4 @@ pub mod fabric;
 pub mod support;
 pub mod usage;
 pub mod platform;
+pub mod apps;
