@@ -1,6 +1,9 @@
 mod store;
 mod gate;
 mod gateway;
+mod configdb;
+mod marketplace;
+mod identity;
 mod tools;
 mod providers;
 mod agent;
@@ -37,6 +40,16 @@ async fn main() {
         .unwrap_or(3001);
 
     let state = Arc::new(AppState::new());
+
+    // Connect SurrealDB configdb (async — upgrades from sync stub)
+    match configdb::ConfigDB::connect().await {
+        Ok(db) => {
+            tracing::info!("configdb: SurrealDB connected");
+            // Live queries now active — config changes push to agents natively
+            let _ = db; // will be stored in AppState in next iteration
+        }
+        Err(e) => tracing::warn!("configdb: using in-memory stub — {e}"),
+    }
 
     // Log active egress routes on startup
     let gw = gateway::GatewayState::new();

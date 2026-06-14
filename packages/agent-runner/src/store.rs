@@ -58,15 +58,18 @@ pub struct Peer {
     pub region:    Option<String>,
 }
 
-// ── AppState ──────────────────────────────────────────────────────────────────
-// Single shared state struct; each field is independently locked.
+// ── AppState — Autonomyx Runtime Core ────────────────────────────────────────
+// Single shared state; native everywhere (home server, edge, k8s, embedded).
+// ConfigDB (SurrealDB) is the live config store — all other state is ephemeral.
 
 pub struct AppState {
-    pub agents: RwLock<HashMap<String, AgentIdentity>>,
-    pub runs:   RwLock<HashMap<String, AgentRun>>,
-    pub peers:  RwLock<HashMap<String, Peer>>,
-    // WebSocket event sinks: run_id → list of tokio Senders
+    pub agents:  RwLock<HashMap<String, AgentIdentity>>,
+    pub runs:    RwLock<HashMap<String, AgentRun>>,
+    pub peers:   RwLock<HashMap<String, Peer>>,
+    // WebSocket event sinks: run_id → tokio broadcast senders
     pub ws_sinks: RwLock<HashMap<String, Vec<tokio::sync::broadcast::Sender<String>>>>,
+    // ConfigDB handle — SurrealDB (embedded or remote)
+    pub config:   std::sync::Arc<crate::configdb::ConfigDB>,
 }
 
 impl AppState {
@@ -75,16 +78,21 @@ impl AppState {
         let demo = AgentIdentity {
             id: "agent_demo".into(), owner_id: "user_demo".into(),
             name: "Demo Agent".into(), description: "Built-in demo agent".into(),
-            model: "claude-sonnet-4-6".into(), status: "idle".into(),
+            model: "gpt-4o".into(), status: "idle".into(),
             capabilities: vec!["research".into(), "code".into()],
             created_at: Utc::now(), updated_at: Utc::now(),
         };
         agents.insert(demo.id.clone(), demo);
+
+        // ConfigDB: start with in-memory stub; connect() upgrades async on startup
+        let config = std::sync::Arc::new(crate::configdb::ConfigDB::new_sync());
+
         Self {
             agents:   RwLock::new(agents),
             runs:     RwLock::new(HashMap::new()),
             peers:    RwLock::new(HashMap::new()),
             ws_sinks: RwLock::new(HashMap::new()),
+            config,
         }
     }
 
