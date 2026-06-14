@@ -10,6 +10,7 @@ use crate::usage::UsageMeter;
 use crate::onboarding::OnboardingRegistry;
 use crate::blockchain::BlockchainBridge;
 use crate::storage::StorageRegistry;
+use crate::govgraph::GovernanceGraph;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -121,6 +122,8 @@ pub struct AppState {
     pub blockchain: Arc<BlockchainBridge>,
     // Distributed storage — policy-driven, milestone-bound, fine-grained ACL
     pub storage: StorageRegistry,
+    // Governance graph — compute core wired to governance at every edge
+    pub govgraph: GovernanceGraph,
 }
 
 impl AppState {
@@ -154,6 +157,7 @@ impl AppState {
             onboarding:  OnboardingRegistry::new(),
             blockchain:  BlockchainBridge::new(),
             storage:     StorageRegistry::new(),
+            govgraph:    GovernanceGraph::new(),
         }
     }
 
