@@ -35,6 +35,7 @@ async-stream  = "0.3"
 urlencoding   = "2"
 clap          = { version = "4", features = ["derive"] }
 anyhow        = "1"
+async-trait   = "0.1"
 
 # ConfigDB — SurrealDB (embedded memory/RocksDB or remote cluster)
 # Features: kv-mem (dev), kv-rocksdb (device/home server), native-tls (remote)

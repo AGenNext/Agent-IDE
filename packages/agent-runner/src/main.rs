@@ -6,6 +6,8 @@ mod marketplace;
 mod identity;
 mod lifecycle;
 mod fabric;
+mod bom;
+mod core;
 mod tools;
 mod providers;
 mod agent;
