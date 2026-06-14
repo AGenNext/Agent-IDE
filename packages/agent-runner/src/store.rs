@@ -11,6 +11,7 @@ use crate::onboarding::OnboardingRegistry;
 use crate::blockchain::BlockchainBridge;
 use crate::storage::StorageRegistry;
 use crate::govgraph::GovernanceGraph;
+use crate::computekube::ComputeKube;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -124,6 +125,8 @@ pub struct AppState {
     pub storage: StorageRegistry,
     // Governance graph — compute core wired to governance at every edge
     pub govgraph: GovernanceGraph,
+    // ComputeKube — Kubernetes execution backend for governance graph nodes
+    pub computekube: ComputeKube,
 }
 
 impl AppState {
@@ -158,6 +161,7 @@ impl AppState {
             blockchain:  BlockchainBridge::new(),
             storage:     StorageRegistry::new(),
             govgraph:    GovernanceGraph::new(),
+            computekube: ComputeKube::new(),
         }
     }
 

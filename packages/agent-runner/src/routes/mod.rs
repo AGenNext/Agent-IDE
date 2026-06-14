@@ -18,3 +18,4 @@ pub mod feedback;
 pub mod blockchain;
 pub mod storage;
 pub mod govgraph;
+pub mod computekube;

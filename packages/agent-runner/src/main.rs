@@ -34,6 +34,7 @@ mod blockchain;
 mod compute;
 mod storage;
 mod govgraph;
+mod computekube;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -167,6 +168,8 @@ async fn main() {
         .nest("/api", routes::storage::router(state.clone()))
         // Governance graph — compute core wired to governance at every edge
         .nest("/api", routes::govgraph::router(state.clone()))
+        // ComputeKube — governed k8s job execution for graph nodes
+        .nest("/api", routes::computekube::router(state.clone()))
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
