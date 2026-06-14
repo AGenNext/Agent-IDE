@@ -1,0 +1,303 @@
+// Autonomyx Platform — canonical example
+// Demonstrates: multi-provider LLM, multi-operator infra, CNCF-native deployment,
+// AI-native agent architecture grounded in schema.org types.
+//
+// All keys come from env vars — no secrets in source (supply chain risk = 0).
+
+// ── Tools (schema:SoftwareApplication / schema:EntryPoint) ───────────────────
+
+@schema("schema:SoftwareApplication")
+tool web_search {
+    description: "Search the web and return structured results"
+    input:  { query: string, max_results: number = 5 }
+    output: json
+    impl:   http
+    url:    "$SEARCH_API_URL"
+    auth:   { type: api_key_env, key: "SEARCH_API_KEY" }
+}
+
+@schema("schema:SoftwareApplication")
+tool shell {
+    description: "Execute a shell command in the workspace container"
+    input:  { command: string, timeout: number = 30 }
+    output: string
+    impl:   shell
+}
+
+@schema("schema:SoftwareApplication")
+tool http_client {
+    description: "Make an authenticated HTTP request to any API"
+    input:  { url: string, method: string = "GET", body: json }
+    output: json
+    impl:   http
+}
+
+@schema("schema:SoftwareApplication")
+tool code_exec {
+    description: "Execute Python or JavaScript code and return the output"
+    input:  { code: string, language: string = "python" }
+    output: json
+    impl:   wasm
+}
+
+// ── Agents — multi-provider (no lock-in) ──────────────────────────────────────
+
+// Agent 1: uses OpenAI — swap model or base_url to change provider
+@schema("schema:SoftwareApplication")
+agent ResearchAgent {
+    model:     "gpt-4o"
+    provider:  openai
+    // api_key from LLM_API_KEY env var at runtime
+
+    tools:     [web_search, http_client]
+
+    memory: episodic {
+        storage: rag
+        window:  16000
+    }
+
+    reasoning: react {
+        max_iter:   12
+        reflection: true
+        anticipate: true
+    }
+
+    perception: text
+
+    tags: ["research", "web", "production"]
+}
+
+// Agent 2: local Ollama — zero external cost
+@schema("schema:SoftwareApplication")
+agent LocalAgent {
+    model:    "llama3"
+    provider: ollama
+    // base_url from OLLAMA_BASE_URL env var (e.g. http://localhost:11434)
+
+    tools:    [shell, code_exec]
+
+    memory: working {
+        window: 8000
+    }
+
+    reasoning: chain_of_thought {
+        max_iter:   8
+        reflection: false
+    }
+
+    tags: ["local", "dev", "no-cost"]
+}
+
+// Agent 3: Anthropic (when user provides ANTHROPIC_API_KEY)
+@schema("schema:SoftwareApplication")
+agent DeepThinkAgent {
+    model:    "claude-opus-4-8"
+    provider: anthropic
+
+    tools:    [web_search, code_exec, shell]
+
+    memory: semantic {
+        storage: vector
+        index:   "autonomyx-knowledge"
+    }
+
+    reasoning: dppm {
+        max_iter:   20
+        decompose:  "task_decompose"
+        parallel:   true
+        reflection: true
+        anticipate: true
+    }
+
+    perception: multimodal {
+        encoder:     "clip"
+        som:         true
+        screenshot:  true
+    }
+
+    tags: ["deep-reasoning", "multimodal", "expensive"]
+}
+
+// ── Workflows (schema:Action) ─────────────────────────────────────────────────
+
+@schema("schema:Action")
+workflow research {
+    agent: ResearchAgent
+    input:  { query: string }
+    output: { summary: string, sources: json }
+
+    step gather {
+        tool:   web_search
+        input:  { query: "$query" }
+        output: rawResults
+    }
+
+    step synthesize {
+        tool:   http_client
+        input:  { url: "$LLM_BASE_URL/v1/chat/completions", body: { messages: "$rawResults" } }
+        output: summary
+    }
+
+    on_error: retry
+}
+
+@schema("schema:Action")
+workflow code_task {
+    agent: LocalAgent
+    input: { spec: string }
+    output: { code: string, tests: string }
+
+    step write {
+        tool:    code_exec
+        input:   { code: "$spec", language: "python" }
+        output:  generatedCode
+        when:    "spec != ''"
+    }
+
+    step test {
+        tool:    shell
+        input:   { command: "python -m pytest /tmp/generated_test.py" }
+        output:  testOutput
+        parallel: false
+    }
+
+    on_error: fail
+}
+
+// ── Gateway (ingress + egress) ────────────────────────────────────────────────
+
+gateway autonomyx-gw {
+    auth {
+        mode:           api_key
+        api_key_header: "Authorization"
+        rate_limit: { rpm: 600, burst: 100 }
+    }
+
+    ingress {
+        tls:  true
+        port: 443
+        host: "$AUTONOMYX_DOMAIN"
+
+        route "/api/*"      -> backend:3001 {
+            methods: [GET, POST, DELETE]
+            auth:    true
+        }
+        route "/ws/*"       -> backend:3001 {
+            methods: [WS]
+            auth:    true
+        }
+        route "/transfer/*" -> backend:3001 {
+            methods: [POST]
+            auth:    true
+        }
+        route "/health"     -> backend:3001 {
+            auth:    false
+        }
+        route "/*"          -> ide:3000 {
+            auth:    false
+        }
+    }
+
+    egress {
+        default_timeout: 120
+        retry: { attempts: 3, backoff: exponential }
+
+        allow llm        -> "$LLM_BASE_URL" {
+            auth: { type: bearer_env, env: "LLM_API_KEY" }
+            tls:  true
+        }
+        allow anthropic  -> "$ANTHROPIC_BASE_URL" {
+            auth: { type: bearer_env, env: "ANTHROPIC_API_KEY" }
+            tls:  true
+        }
+        allow ollama     -> "$OLLAMA_BASE_URL" {
+            auth: { type: none }
+            tls:  false   // local endpoint
+        }
+        allow search     -> "$SEARCH_API_URL" {
+            auth: { type: api_key_env, env: "SEARCH_API_KEY" }
+            tls:  true
+        }
+    }
+}
+
+// ── Peers (egress-push only — no inbound raw connections) ────────────────────
+
+@schema("schema:Organization")
+peer edge-eu {
+    url:      "https://eu.autonomyx.ai"
+    protocol: transfer
+    auth:     { type: bearer_env, key: "PEER_EU_KEY" }
+    region:   "eu-west-1"
+}
+
+@schema("schema:Organization")
+peer edge-ap {
+    url:      "https://ap.autonomyx.ai"
+    protocol: transfer
+    auth:     { type: bearer_env, key: "PEER_AP_KEY" }
+    region:   "ap-southeast-1"
+}
+
+// ── Infra — multi-operator, CNCF-native ───────────────────────────────────────
+
+@schema("schema:DataCenter")
+infra production {
+    provider: kubernetes       // CNCF graduated
+    runtime:  autonomyx_runner
+    domain:   "$AUTONOMYX_DOMAIN"
+    tls:      true
+
+    resource cpu     prod-cpu     { size: "2",   count: 1 }
+    resource memory  prod-mem     { size: "4Gi", count: 1 }
+    resource storage prod-storage { size: "20Gi" }
+}
+
+@schema("schema:DataCenter")
+infra edge-oci {
+    provider: oci
+    region:   "$OCI_REGION"
+    runtime:  autonomyx_runner
+    image:    "ghcr.io/agennext/agent-ide:main"
+    domain:   "edge.autonomyx.ai"
+    tls:      true
+}
+
+@schema("schema:DataCenter")
+infra dev-local {
+    provider: docker
+    runtime:  autonomyx_runner
+    domain:   "localhost"
+    tls:      false
+}
+
+// ── Pipelines (schema:SoftwareSourceCode) ────────────────────────────────────
+
+pipeline ci-build {
+    trigger: push
+
+    stage test {
+        runs_on: "ubuntu-24.04"
+        run:     "cargo test --all"
+        run:     "npm test --workspaces"
+    }
+
+    stage build-rust {
+        runs_on: "ubuntu-24.04"
+        needs:   ["test"]
+        run:     "cargo build --release --target x86_64-unknown-linux-musl"
+        run:     "cargo build --release --target aarch64-unknown-linux-musl"
+    }
+
+    stage build-container {
+        runs_on: "ubuntu-24.04"
+        needs:   ["build-rust"]
+        run:     "docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/agennext/agent-ide:main --push ."
+    }
+
+    stage deploy {
+        runs_on: "ubuntu-24.04"
+        needs:   ["build-container"]
+        run:     "helm upgrade --install autonomyx ./deploy/helm/autonomyx -n autonomyx --create-namespace"
+    }
+}

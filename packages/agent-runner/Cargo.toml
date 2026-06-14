@@ -1,0 +1,53 @@
+[package]
+name    = "agent-runner"
+version = "0.1.0"
+edition = "2021"
+description = "Autonomyx runtime core — native everywhere (server, edge, home, embedded)"
+
+[[bin]]
+name = "autonomyx-runner"
+path = "src/main.rs"
+
+[dependencies]
+# Transport
+axum              = { version = "0.7",  features = ["ws", "macros"] }
+axum-extra        = { version = "0.9",  features = ["typed-header"] }
+tower             = "0.4"
+tower-http        = { version = "0.5", features = ["cors", "trace"] }
+tokio             = { version = "1",   features = ["full"] }
+tokio-tungstenite = "0.21"
+
+# Serialization
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+
+# HTTP client (LLM + peer calls)
+reqwest     = { version = "0.12", features = ["json", "stream"] }
+
+# IDs + time
+uuid        = { version = "1", features = ["v4"] }
+chrono      = { version = "0.4", features = ["serde"] }
+
+# Async utilities
+futures     = "0.3"
+tokio-stream = "0.1"
+async-stream  = "0.3"
+urlencoding   = "2"
+clap          = { version = "4", features = ["derive"] }
+anyhow        = "1"
+async-trait   = "0.1"
+
+# ConfigDB — SurrealDB (embedded memory/RocksDB or remote cluster)
+# Features: kv-mem (dev), kv-rocksdb (device/home server), native-tls (remote)
+# "native everywhere": same crate compiles for Linux/macOS/Windows/WASM
+surrealdb = { version = "1", default-features = false, features = ["kv-mem"] }
+
+# Tracing
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 3
+lto       = true
+codegen-units = 1
+strip     = true

@@ -1,0 +1,50 @@
+# Device Identity for Zot Registry
+# Every device that hosts Zot or pushes to Zot must have a signed identity.
+# Identity is issued at device provisioning time and bound to the device's HSM/TPM.
+# Cosign (CNCF sigstore) signs every image pushed — the registry rejects unsigned images.
+---
+# Kubernetes Secret — device identity (never committed, generated at provision time)
+# stacker build produces a .sig file; cosign attaches it to the OCI manifest.
+apiVersion: v1
+kind: Secret
+metadata:
+  name:      device-signing-key
+  namespace: zot-registry
+  labels:
+    app.kubernetes.io/part-of: autonomyx-platform
+  annotations:
+    # Rotation: re-issued every 90 days from the HSM
+    autonomyx.io/rotate-interval: "90d"
+    autonomyx.io/did:             "${DEVICE_DID}"   # did:autonomyx:<pubkey>
+type: Opaque
+data:
+  # cosign private key (base64) — derived from device Ed25519 keypair
+  cosign.key:  "${COSIGN_PRIVATE_KEY_B64}"
+  # cosign public key — shared with all k8s clusters for verification
+  cosign.pub:  "${COSIGN_PUBLIC_KEY_B64}"
+---
+# Policy Enforcement — k8s clusters only pull images signed by this device
+# Deployed to EVERY cluster that receives images from this device
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name:      autonomyx-image-policy
+  namespace: kube-system
+data:
+  policy.json: |
+    {
+      "default": [{ "type": "reject" }],
+      "transports": {
+        "docker": {
+          "${ZOT_REGISTRY_HOST}:5000/agennext": [
+            {
+              "type": "sigstoreSigned",
+              "keyPath": "/etc/cosign/cosign.pub",
+              "signedIdentity": {
+                "type": "matchRepository"
+              }
+            }
+          ]
+        }
+      }
+    }

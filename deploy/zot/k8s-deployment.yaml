@@ -1,0 +1,134 @@
+# Zot OCI Registry — self-hosted on the metal box / device.
+# The DEVICE is the host. No cloud registry. No external dependencies.
+# Stacker pushes → Zot stores → ArgoCD pulls → k8s clusters deploy.
+#
+# The device runs Zot as a system service (bare metal or k8s DaemonSet on the host).
+# Each device in the fleet has its own Zot instance — content is replicated via
+# Zot's sync extension when needed.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zot-registry
+  labels:
+    app.kubernetes.io/part-of: autonomyx-platform
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-config
+  namespace: zot-registry
+data:
+  config.json: |
+    {
+      "distSpecVersion": "1.1.0",
+      "storage": { "rootDirectory": "/var/lib/zot", "dedupe": true, "gc": true },
+      "http":    { "address": "0.0.0.0", "port": "5000" },
+      "log":     { "level": "info", "output": "stdout" },
+      "extensions": {
+        "search":  { "enable": true },
+        "ui":      { "enable": true },
+        "metrics": { "enable": true, "prometheus": { "path": "/metrics" } },
+        "trust":   { "enable": true, "cosign": true }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name:      zot
+  namespace: zot-registry
+  labels:
+    app.kubernetes.io/name:       zot
+    app.kubernetes.io/part-of:    autonomyx-platform
+    app.kubernetes.io/managed-by: Helm
+spec:
+  serviceName: zot
+  replicas:    1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zot
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zot
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "5000"
+        prometheus.io/path:   "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    1000
+        fsGroup:      1000
+      containers:
+        - name:  zot
+          image: ghcr.io/project-zot/zot-linux-amd64:latest
+          args:  ["serve", "/etc/zot/config.json"]
+          ports:
+            - name:          registry
+              containerPort: 5000
+              protocol:      TCP
+          env:
+            - name:  ZOT_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: zot-secrets
+                  key:  admin-user
+          volumeMounts:
+            - name:      config
+              mountPath: /etc/zot/config.json
+              subPath:   config.json
+            - name:      data
+              mountPath: /var/lib/zot
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 10
+            periodSeconds:       15
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: registry
+            initialDelaySeconds: 5
+            periodSeconds:       5
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "256Mi"
+            limits:
+              cpu:    "1"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: zot-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: "100Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name:      zot
+  namespace: zot-registry
+  labels:
+    app.kubernetes.io/name: zot
+spec:
+  selector:
+    app.kubernetes.io/name: zot
+  type: ClusterIP
+  ports:
+    - name:       registry
+      port:       5000
+      targetPort: 5000

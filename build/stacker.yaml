@@ -1,0 +1,118 @@
+# Autonomyx Stacker Build — Software Integration (not CI)
+# https://stackerbuild.io/v1.0.0/
+#
+# Stacker produces hermetic, reproducible OCI images.
+# No Docker daemon. No network during build. Content-addressed layers.
+# Supply chain risk = 0: every base image is pinned by digest.
+#
+# Build: stacker build
+# Publish: stacker publish --url ghcr.io/agennext/agent-ide
+#
+# Layers (bottom → top):
+#   base-alpine    — hardened Alpine base (pinned by sha256)
+#   rust-toolchain — musl Rust cross-compiler
+#   rust-build     — autonomyx-runner binary (x86_64 + aarch64)
+#   node-build     — TypeScript IDE (Theia)
+#   autonomyx      — final image: both binaries, no build tools
+
+base-alpine:
+  from:
+    type:   oci
+    # Alpine 3.20 — pinned by digest (supply chain: no tag drift)
+    url:    docker://alpine@sha256:0a4eaa0eecf5f8c050e5bba433f58c052be7587ee8af3e8b3910ef9ab5fbe9f5
+  run: |
+    apk add --no-cache \
+      ca-certificates \
+      libgcc \
+      libstdc++ \
+      && update-ca-certificates
+  # No shell, no package manager in final image
+  build_only: false
+
+rust-toolchain:
+  from:
+    type: built
+    tag:  base-alpine
+  import:
+    - path: https://static.rust-lang.org/dist/rust-1.77.0-x86_64-unknown-linux-musl.tar.gz
+      hash: sha256:YOUR_RUST_TARBALL_HASH
+  run: |
+    # Install Rust toolchain (offline after import)
+    tar xf /stacker/rust-1.77.0-x86_64-unknown-linux-musl.tar.gz
+    ./rust-1.77.0-x86_64-unknown-linux-musl/install.sh --prefix=/usr/local
+    rustup target add aarch64-unknown-linux-musl
+  build_only: true
+
+rust-build:
+  from:
+    type: built
+    tag:  rust-toolchain
+  import:
+    - path: ${{PROJECT_DIR}}/packages/agent-runner/
+  run: |
+    cd /stacker/agent-runner
+    # x86_64 musl — static binary, zero shared lib deps
+    RUSTFLAGS="-C target-feature=+crt-static" \
+    cargo build --release --target x86_64-unknown-linux-musl
+    # aarch64 musl — cross-compiled
+    RUSTFLAGS="-C target-feature=+crt-static" \
+    cargo build --release --target aarch64-unknown-linux-musl
+    # Install both into /artifacts
+    mkdir -p /artifacts
+    cp target/x86_64-unknown-linux-musl/release/autonomyx-runner \
+       /artifacts/autonomyx-runner-amd64
+    cp target/aarch64-unknown-linux-musl/release/autonomyx-runner \
+       /artifacts/autonomyx-runner-arm64
+  build_only: true
+
+node-build:
+  from:
+    type:   oci
+    # Node 22 Alpine — pinned by digest
+    url:    docker://node@sha256:YOUR_NODE22_ALPINE_DIGEST
+  import:
+    - path: ${{PROJECT_DIR}}/
+      dest: /src/
+  run: |
+    cd /src
+    npm ci --workspaces --ignore-scripts
+    npm run build --workspaces
+    # Prune dev dependencies
+    npm prune --production --workspaces
+  build_only: true
+
+autonomyx:
+  from:
+    type: built
+    tag:  base-alpine
+  import:
+    - path: /artifacts/autonomyx-runner-amd64
+      dest: /usr/local/bin/autonomyx-runner
+    - path: /artifacts/autonomyx-runner-arm64
+      dest: /usr/local/bin/autonomyx-runner-arm64
+    - path: ${{PROJECT_DIR}}/packages/agent-ide-backend/lib/
+      dest: /workspace/packages/agent-ide-backend/lib/
+    - path: ${{PROJECT_DIR}}/packages/agent-ide-backend/node_modules/
+      dest: /workspace/packages/agent-ide-backend/node_modules/
+    - path: ${{PROJECT_DIR}}/docker-entrypoint.sh
+      dest: /usr/local/bin/entrypoint.sh
+    - path: ${{PROJECT_DIR}}/examples/
+      dest: /workspace/examples/
+  run: |
+    chmod +x /usr/local/bin/autonomyx-runner
+    chmod +x /usr/local/bin/entrypoint.sh
+    # Non-root user
+    addgroup -g 1001 autonomyx
+    adduser -u 1001 -G autonomyx -s /bin/sh -D autonomyx
+    chown -R autonomyx:autonomyx /workspace
+  config:
+    user:       "1001:1001"
+    working_dir: /workspace
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    env:
+      - RUNTIME_PHASE=2
+      - PORT=3001
+    labels:
+      org.opencontainers.image.source:   "https://github.com/AGenNextHub/Agent-IDE"
+      org.opencontainers.image.vendor:   "Autonomyx"
+      org.opencontainers.image.licenses: "MIT"

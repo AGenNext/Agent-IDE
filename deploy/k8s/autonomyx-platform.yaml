@@ -1,0 +1,409 @@
+# Autonomyx Platform — Kubernetes is the agent runner.
+#
+# Kubernetes is the platform. The autonomyx-runner is its controller.
+# Each agent execution is a Kubernetes Job — k8s schedules, retries, logs.
+# The lifecycle gates map to native k8s resources:
+#
+#   build    → Job (Stacker SI — hermetic OCI build)
+#   sign     → Job (cosign — supply chain proof)
+#   push     → Job (Zot registry — content-addressed)
+#   sync     → ArgoCD Application (GitOps delivery)
+#   deploy   → Deployment/rollout (cluster state)
+#   run      → Job (agent execution — k8s IS the runner)
+#   observe  → DaemonSet/OTel collector (telemetry)
+#   feedback → ConfigMap update → SurrealDB live query → iterate
+#
+# RBAC: autonomyx-runner has permission to create/list/watch Jobs
+#       in the autonomyx namespace — nothing more.
+#
+# Autonomyx is the platform. openautonomyx.com
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autonomyx
+  labels:
+    istio-injection:                enabled
+    app.kubernetes.io/managed-by:  argocd
+
+---
+# ── ConfigMap ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autonomyx-config
+  namespace: autonomyx
+data:
+  PORT:              "3001"
+  RUNTIME_PHASE:     "2"
+  RUST_LOG:          "agent_runner=info,tower_http=info"
+  OTEL_SERVICE_NAME: "autonomyx-runner"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
+  # Kubernetes runner config
+  AGENT_JOB_NAMESPACE: "autonomyx"
+  AGENT_JOB_IMAGE:     "autonomyx-registry:5000/agennext/autonomyx-runner:main"
+  # Marketplace profiles (non-secret — model names, not keys)
+  MARKETPLACE_PROFILE_0_PROVIDER: "openai"
+  MARKETPLACE_PROFILE_0_OPERATOR: "direct"
+  MARKETPLACE_PROFILE_0_NAME:     "gpt-4o"
+  MARKETPLACE_PROFILE_0_MODEL:    "gpt-4o"
+  MARKETPLACE_PROFILE_0_API_KEY_ENV: "LLM_API_KEY"
+  MARKETPLACE_PROFILE_0_DEFAULT:  "true"
+  MARKETPLACE_PROFILE_1_PROVIDER: "anthropic"
+  MARKETPLACE_PROFILE_1_OPERATOR: "direct"
+  MARKETPLACE_PROFILE_1_NAME:     "claude-opus-4-8"
+  MARKETPLACE_PROFILE_1_MODEL:    "claude-opus-4-8"
+  MARKETPLACE_PROFILE_1_API_KEY_ENV: "ANTHROPIC_API_KEY"
+  MARKETPLACE_PROFILE_2_PROVIDER: "ollama"
+  MARKETPLACE_PROFILE_2_OPERATOR: "local"
+  MARKETPLACE_PROFILE_2_NAME:     "llama3"
+  MARKETPLACE_PROFILE_2_MODEL:    "llama3"
+
+---
+# ── Secret — populate via external-secrets or Vault ──────────────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: autonomyx-secrets
+  namespace: autonomyx
+  annotations:
+    # external-secrets.io/backend: vault
+type: Opaque
+stringData:
+  GATEWAY_API_KEY:   ""
+  LLM_API_KEY:       ""
+  ANTHROPIC_API_KEY: ""
+
+---
+# ── ServiceAccount ────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app: autonomyx-runner
+
+---
+# ── RBAC: runner manages agent Jobs — nothing more ───────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+rules:
+  # Agent execution: each run is a k8s Job
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs:     ["create", "get", "list", "watch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs:     ["get"]
+  # Read pod logs from agent Jobs
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs:     ["get", "list", "watch"]
+  # Read own ConfigMap (platform config)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs:     ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+subjects:
+  - kind:      ServiceAccount
+    name:      autonomyx-runner
+    namespace: autonomyx
+roleRef:
+  kind:     Role
+  name:     autonomyx-runner
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ── Controller Deployment — the orchestrator ──────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app:     autonomyx-runner
+    version: "main"
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "3001"
+    prometheus.io/path:   "/metrics"
+spec:
+  replicas: 1   # singleton controller — Jobs it creates are the actual runners
+  selector:
+    matchLabels:
+      app: autonomyx-runner
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app:     autonomyx-runner
+        version: "main"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "3001"
+    spec:
+      serviceAccountName: autonomyx-runner
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    1001
+        runAsGroup:   1001
+        fsGroup:      1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: autonomyx-runner
+          image: "autonomyx-registry:5000/agennext/autonomyx-runner:main"
+          imagePullPolicy: Always
+          ports:
+            - name:          http
+              containerPort: 3001
+              protocol:      TCP
+          envFrom:
+            - configMapRef:
+                name: autonomyx-config
+            - secretRef:
+                name: autonomyx-secrets
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem:   true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "512Mi"
+            limits:
+              cpu:    "2"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 5
+            periodSeconds:       15
+          readinessProbe:
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 2
+            periodSeconds:       5
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+# ── Agent Job template — spawned per run ─────────────────────────────────────
+# The autonomyx-runner creates Jobs from this template (via k8s API).
+# Each Job is one agent execution: isolated, retryable, observable.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autonomyx-agent-job-template
+  namespace: autonomyx
+data:
+  template.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: "agent-run-{{RUN_ID}}"
+      namespace: autonomyx
+      labels:
+        app:      autonomyx-agent
+        run_id:   "{{RUN_ID}}"
+        agent_id: "{{AGENT_ID}}"
+      annotations:
+        autonomyx.io/run_id:   "{{RUN_ID}}"
+        autonomyx.io/agent_id: "{{AGENT_ID}}"
+        autonomyx.io/task:     "{{TASK_SLUG}}"
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app:      autonomyx-agent
+            run_id:   "{{RUN_ID}}"
+        spec:
+          serviceAccountName: autonomyx-runner
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser:    1001
+          containers:
+            - name: agent
+              image: "autonomyx-registry:5000/agennext/autonomyx-runner:main"
+              command: ["autonomyx-runner", "run", "--run-id", "{{RUN_ID}}"]
+              envFrom:
+                - configMapRef:
+                    name: autonomyx-config
+                - secretRef:
+                    name: autonomyx-secrets
+              env:
+                - name:  RUN_ID
+                  value: "{{RUN_ID}}"
+                - name:  AGENT_ID
+                  value: "{{AGENT_ID}}"
+                - name:  AGENT_TASK
+                  value: "{{TASK}}"
+              resources:
+                requests: { cpu: "100m", memory: "256Mi" }
+                limits:   { cpu: "2",    memory: "2Gi" }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem:   true
+                capabilities:
+                  drop: ["ALL"]
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app: autonomyx-runner
+spec:
+  selector:
+    app: autonomyx-runner
+  ports:
+    - name: http
+      port: 3001
+      targetPort: 3001
+
+---
+# ── HPA — scale the controller ────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       autonomyx-runner
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+---
+# ── PodDisruptionBudget ───────────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: autonomyx-runner
+
+---
+# ── NetworkPolicy — zero-trust ────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+spec:
+  podSelector:
+    matchLabels:
+      app: autonomyx-runner
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-system
+      ports:
+        - protocol: TCP
+          port: 3001
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3001
+  egress:
+    - ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 5000}    # Zot registry
+        - {protocol: TCP, port: 11434}   # Ollama
+        - {protocol: TCP, port: 4317}    # OTel gRPC
+        - {protocol: TCP, port: 4318}    # OTel HTTP
+        - {protocol: TCP, port: 8000}    # SurrealDB cluster
+        - {protocol: TCP, port: 6443}    # k8s API server (agent Job creation)
+
+---
+# ── Istio: mTLS STRICT ───────────────────────────────────────────────────────
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: autonomyx-mtls
+  namespace: autonomyx
+spec:
+  mtls:
+    mode: STRICT
+
+---
+# ── Ingress — api.openautonomyx.com ─────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  annotations:
+    kubernetes.io/ingress.class:                      "traefik"
+    traefik.ingress.kubernetes.io/router.tls:         "true"
+    traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+    cert-manager.io/cluster-issuer:                   "letsencrypt-prod"
+spec:
+  tls:
+    - hosts: [api.openautonomyx.com]
+      secretName: autonomyx-tls
+  rules:
+    - host: api.openautonomyx.com
+      http:
+        paths:
+          - path:     /
+            pathType: Prefix
+            backend:
+              service:
+                name: autonomyx-runner
+                port:
+                  number: 3001

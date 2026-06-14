@@ -1,0 +1,36 @@
+{
+  "name": "@autonomyx/lang",
+  "version": "0.1.0",
+  "description": "Autonomyx Language — DSL for agents, workflows, tools, and infra (Langium + Schema.org)",
+  "keywords": ["theia-extension", "langium", "dsl", "autonomyx"],
+  "license": "MIT",
+  "main": "lib/node/main.js",
+  "browser": "lib/browser/frontend-module.js",
+  "scripts": {
+    "build":        "tsc -p tsconfig.json && npm run langium:generate",
+    "langium:generate": "langium generate",
+    "watch":        "tsc -w -p tsconfig.json",
+    "clean":        "rimraf lib"
+  },
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/frontend-module",
+      "backend":  "lib/node/backend-module"
+    }
+  ],
+  "dependencies": {
+    "langium":              "^3.2.0",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "langium-cli":          "^3.2.0",
+    "typescript":           "~5.4.0",
+    "rimraf":               "^5.0.0",
+    "@theia/core":          "1.57.0",
+    "@types/node":          "^18.0.0"
+  },
+  "peerDependencies": {
+    "@theia/core":          "1.57.0"
+  }
+}

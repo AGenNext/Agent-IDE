@@ -1,0 +1,103 @@
+# Autonomyx ArgoCD Application — GitOps-compliant deployment
+# CNCF: ArgoCD (graduated) watches this repo and syncs the Helm chart.
+# Every profile change committed to git is automatically live within seconds.
+#
+# Shared data plane:
+#   - All profiles/operators read from the SAME PVC (/workspace/data)
+#   - Profile selection happens at request time via X-Autonomyx-Profile header
+#   - No restart needed to switch profiles — hot-swap through marketplace router
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name:      autonomyx
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: autonomyx-platform
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL:        https://github.com/AGenNextHub/Agent-IDE.git
+    targetRevision: main
+    path:           deploy/helm/autonomyx
+    helm:
+      valueFiles:
+        - values.yaml
+      # Override values from git without touching the chart
+      parameters:
+        - name:  image.tag
+          value: "main"
+        - name:  runtimePhase
+          value: "2"
+
+  destination:
+    server:    https://kubernetes.default.svc
+    namespace: autonomyx
+
+  syncPolicy:
+    automated:
+      prune:    true     # remove resources deleted from git
+      selfHeal: true     # fix manual drift automatically
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration:    5s
+        factor:      2
+        maxDuration: 3m
+
+  # Health check — ArgoCD watches the Deployment rollout
+  ignoreDifferences:
+    - group:  apps
+      kind:   Deployment
+      jsonPointers:
+        - /spec/template/metadata/annotations/kubectl.kubernetes.io~1last-applied-configuration
+---
+# ApplicationSet — spawn one app per environment from a single template
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name:      autonomyx-envs
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - env:         dev
+            namespace:   autonomyx-dev
+            valueFile:   values-dev.yaml
+            branch:      main
+          - env:         staging
+            namespace:   autonomyx-staging
+            valueFile:   values-staging.yaml
+            branch:      main
+          - env:         prod
+            namespace:   autonomyx
+            valueFile:   values.yaml
+            branch:      main
+  template:
+    metadata:
+      name: "autonomyx-{{env}}"
+    spec:
+      project: default
+      source:
+        repoURL:        https://github.com/AGenNextHub/Agent-IDE.git
+        targetRevision: "{{branch}}"
+        path:           deploy/helm/autonomyx
+        helm:
+          valueFiles:
+            - "{{valueFile}}"
+      destination:
+        server:    https://kubernetes.default.svc
+        namespace: "{{namespace}}"
+      syncPolicy:
+        automated:
+          prune:    true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

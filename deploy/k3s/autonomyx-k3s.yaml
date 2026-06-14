@@ -1,0 +1,240 @@
+# Autonomyx on k3s — Kubernetes IS the agent runner.
+#
+# k3s is the lightweight Kubernetes. Native everywhere:
+#   laptop, home server, Raspberry Pi, bare metal, cloud VM.
+#
+# Works out of the box with k3s defaults:
+#   - Traefik v2 (bundled ingress controller)
+#   - local-path storage provisioner
+#   - flannel CNI (no Cilium required — add later for eBPF)
+#   - containerd runtime
+#
+# No Istio required in this manifest.
+# Add Istio separately for mTLS STRICT between pods.
+#
+# Deploy:
+#   kubectl apply -f deploy/k3s/autonomyx-k3s.yaml
+#
+# Or with the Makefile:
+#   make k3s-deploy
+#
+# Autonomyx is the platform. openautonomyx.com
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autonomyx
+  labels:
+    app.kubernetes.io/managed-by: autonomyx
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autonomyx-config
+  namespace: autonomyx
+data:
+  PORT:              "3001"
+  RUNTIME_PHASE:     "2"
+  RUST_LOG:          "agent_runner=info,tower_http=info"
+  OTEL_SERVICE_NAME: "autonomyx-runner"
+  # Local Ollama (common on k3s home server)
+  OLLAMA_BASE_URL:   "http://host.k3d.internal:11434"
+  # Agent Jobs run in the same namespace
+  AGENT_JOB_NAMESPACE: "autonomyx"
+  # Marketplace: Ollama local by default (no API key needed)
+  MARKETPLACE_PROFILE_0_PROVIDER: "ollama"
+  MARKETPLACE_PROFILE_0_OPERATOR: "local"
+  MARKETPLACE_PROFILE_0_NAME:     "llama3"
+  MARKETPLACE_PROFILE_0_MODEL:    "llama3"
+  MARKETPLACE_PROFILE_0_DEFAULT:  "true"
+  # Add more profiles via MARKETPLACE_PROFILE_N_* env vars
+
+---
+# Populate with your actual keys — never commit secrets to git
+apiVersion: v1
+kind: Secret
+metadata:
+  name: autonomyx-secrets
+  namespace: autonomyx
+type: Opaque
+stringData:
+  GATEWAY_API_KEY:   "change-me-before-deploy"
+  LLM_API_KEY:       ""
+  ANTHROPIC_API_KEY: ""
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+
+---
+# RBAC: runner creates agent Jobs — nothing more
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "jobs/status"]
+    verbs:     ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs:     ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs:     ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+subjects:
+  - kind: ServiceAccount
+    name: autonomyx-runner
+    namespace: autonomyx
+roleRef:
+  kind:     Role
+  name:     autonomyx-runner
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app: autonomyx-runner
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "3001"
+    prometheus.io/path:   "/metrics"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autonomyx-runner
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: autonomyx-runner
+    spec:
+      serviceAccountName: autonomyx-runner
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    1001
+        runAsGroup:   1001
+      containers:
+        - name: autonomyx-runner
+          # Build locally with: make build-image
+          # Or load into k3s: k3s ctr images import autonomyx-runner.tar
+          image: "autonomyx-runner:dev"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: autonomyx-config
+            - secretRef:
+                name: autonomyx-secrets
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem:   true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "2"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 3
+            periodSeconds:       10
+          readinessProbe:
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 1
+            periodSeconds:       5
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+spec:
+  selector:
+    app: autonomyx-runner
+  ports:
+    - name: http
+      port: 3001
+      targetPort: 3001
+
+---
+# Traefik IngressRoute (k3s bundled Traefik v2)
+# Works without cert-manager for local development.
+# Add TLS via Let's Encrypt for production (see values.yaml).
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+spec:
+  entryPoints:
+    - web          # port 80 for local; change to websecure + TLS for prod
+  routes:
+    - match: PathPrefix(`/`)
+      kind:  Rule
+      services:
+        - name: autonomyx-runner
+          port: 3001
+
+---
+# Fallback: standard Ingress (if Traefik CRDs not available)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: autonomyx-runner-ingress
+  namespace: autonomyx
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+spec:
+  rules:
+    - http:
+        paths:
+          - path:     /
+            pathType: Prefix
+            backend:
+              service:
+                name: autonomyx-runner
+                port:
+                  number: 3001

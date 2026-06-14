@@ -1,0 +1,104 @@
+# Autonomyx Ingress — Caddy TLS termination + protocol pinning
+# Supply chain risk = 0:
+#   - TLS 1.2 minimum (TLS 1.0/1.1 disabled)
+#   - HTTP/2 only on the public face
+#   - No raw ports exposed externally
+#   - All traffic enters through this single ingress point
+#
+# Egress: outbound calls leave through the autonomyx-runner's EgressClient
+#         (see gateway.rs) — not through Caddy.
+
+{
+    # Global options
+    email         {env.CADDY_EMAIL}
+    admin         off          # disable Caddy admin API in production
+    auto_https    on
+    servers {
+        protocols  h1 h2       # HTTP/1.1 + HTTP/2 only
+        # h3 (QUIC) disabled until supply-chain audited
+    }
+}
+
+# ── Primary ingress — IDE + API ───────────────────────────────────────────────
+{env.AUTONOMYX_DOMAIN} {
+    tls {
+        protocols tls1.2 tls1.3
+        ciphers   TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 \
+                  TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 \
+                  TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 \
+                  TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+    }
+
+    # Security headers on all responses
+    header {
+        Strict-Transport-Security  "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options     "nosniff"
+        X-Frame-Options            "DENY"
+        Referrer-Policy            "no-referrer"
+        Permissions-Policy         "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # ── WebSocket ingress (real-time run events) ──────────────────────────────
+    @ws {
+        path /ws/*
+        header Connection *Upgrade*
+        header Upgrade    websocket
+    }
+    reverse_proxy @ws localhost:3001 {
+        header_up Host              {host}
+        header_up X-Real-IP         {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        transport http {
+            read_timeout  300s
+            write_timeout 300s
+        }
+    }
+
+    # ── Transfer egress endpoint (inbound push from authorized peers only) ────
+    @transfer {
+        path /transfer/*
+        method POST
+    }
+    reverse_proxy @transfer localhost:3001 {
+        header_up Host              {host}
+        header_up X-Real-IP         {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Block GET /transfer/* — egress-push only
+    @transfer_get {
+        path    /transfer/*
+        not method POST
+    }
+    respond @transfer_get 405
+
+    # ── API routes ────────────────────────────────────────────────────────────
+    @api {
+        path /api/*
+    }
+    reverse_proxy @api localhost:3001 {
+        header_up Host              {host}
+        header_up X-Real-IP         {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        transport http {
+            read_timeout  60s
+            write_timeout 60s
+        }
+    }
+
+    # ── Health probe (no auth required) ──────────────────────────────────────
+    reverse_proxy /health localhost:3001
+
+    # ── IDE frontend (Theia) ──────────────────────────────────────────────────
+    reverse_proxy /* localhost:3000 {
+        header_up Host              {host}
+        header_up X-Real-IP         {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+# ── Redirect bare HTTP → HTTPS (protocol pinning) ────────────────────────────
+http://{env.AUTONOMYX_DOMAIN} {
+    redir https://{env.AUTONOMYX_DOMAIN}{uri} permanent
+}

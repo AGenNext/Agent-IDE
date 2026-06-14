@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/eclipse-langium/langium/main/packages/langium/schemas/langium-config.schema.json",
+  "projectName": "Autonomyx",
+  "languages": [
+    {
+      "id":         "autonomyx",
+      "grammar":    "src/language/autonomyx.langium",
+      "fileExtensions": [".ayx"],
+      "textMateGrammar": "src/language/autonomyx.tmLanguage.json",
+      "output": {
+        "path": "src/language/generated"
+      }
+    }
+  ]
+}

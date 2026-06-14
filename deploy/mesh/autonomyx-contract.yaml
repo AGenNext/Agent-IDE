@@ -1,0 +1,190 @@
+# Autonomyx Network Contract — Istio service mesh (CNCF incubating)
+# The NETWORK holds the contract:
+#   - mTLS between all pods
+#   - Weighted routing to LLM provider profiles
+#   - Circuit breaking + retry at the sidecar layer (not in app code)
+#   - Telemetry via OpenTelemetry (CNCF graduated)
+#
+# This file is generated from the .ayx contract declarations
+# and synced by ArgoCD (GitOps — the contract lives in git).
+
+# ── mTLS — enforce across the entire autonomyx namespace ─────────────────────
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name:      autonomyx-mtls
+  namespace: autonomyx
+spec:
+  mtls:
+    mode: STRICT   # plaintext rejected — network holds the contract
+---
+# ── DestinationRule — circuit breaking + connection pool ─────────────────────
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name:      autonomyx-backend
+  namespace: autonomyx
+spec:
+  host: autonomyx-backend.autonomyx.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      http:
+        http1MaxPendingRequests:  100
+        http2MaxRequests:         1000
+        maxRequestsPerConnection: 10
+    outlierDetection:
+      # Circuit breaker — network trips this, not the app
+      consecutiveGatewayErrors: 5
+      interval:               10s
+      baseEjectionTime:       30s
+      maxEjectionPercent:     50
+      minHealthPercent:       30
+    tls:
+      mode: ISTIO_MUTUAL   # sidecar handles cert rotation automatically
+---
+# ── VirtualService — edge branching with live traffic weights ─────────────────
+# Weights are the compiled output of:
+#   contract llm-routing { traffic { strategy: latency_weighted ... } }
+# Update weights in .ayx → commit → ArgoCD syncs → Istio applies instantly.
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name:      autonomyx-llm-routing
+  namespace: autonomyx
+spec:
+  hosts:
+    - autonomyx-backend.autonomyx.svc.cluster.local
+  http:
+    # Header-based routing: X-Autonomyx-Profile overrides weights
+    - match:
+        - headers:
+            x-autonomyx-profile:
+              regex: "openai/.*"
+      route:
+        - destination:
+            host: autonomyx-backend.autonomyx.svc.cluster.local
+            subset: openai
+      timeout: 120s
+      retries:
+        attempts:            3
+        perTryTimeout:       40s
+        retryOn:             "5xx,connect-failure,reset"
+
+    - match:
+        - headers:
+            x-autonomyx-profile:
+              regex: "anthropic/.*"
+      route:
+        - destination:
+            host: autonomyx-backend.autonomyx.svc.cluster.local
+            subset: anthropic
+      timeout: 120s
+      retries:
+        attempts:            3
+        perTryTimeout:       40s
+        retryOn:             "5xx,connect-failure,reset"
+
+    - match:
+        - headers:
+            x-autonomyx-profile:
+              regex: "ollama/.*"
+      route:
+        - destination:
+            host: autonomyx-backend.autonomyx.svc.cluster.local
+            subset: ollama
+
+    # Default: latency-weighted across all providers
+    # Weights updated by the edge router based on live network data
+    - route:
+        - destination:
+            host: autonomyx-backend.autonomyx.svc.cluster.local
+            subset: openai
+          weight: 70
+        - destination:
+            host: autonomyx-backend.autonomyx.svc.cluster.local
+            subset: ollama
+          weight: 20
+        - destination:
+            host: autonomyx-backend.autonomyx.svc.cluster.local
+            subset: anthropic
+          weight: 10
+      timeout: 120s
+      retries:
+        attempts:            3
+        perTryTimeout:       40s
+        retryOn:             "5xx,connect-failure,reset,gateway-error"
+---
+# ── Telemetry — OpenTelemetry traces for every LLM call ──────────────────────
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name:      autonomyx-otel
+  namespace: autonomyx
+spec:
+  tracing:
+    - providers:
+        - name: otel
+      randomSamplingPercentage: 100.0
+  metrics:
+    - providers:
+        - name: prometheus
+---
+# ── Cilium NetworkPolicy (eBPF) — deepest layer, evaluated first ──────────────
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name:      autonomyx-ebpf-policy
+  namespace: autonomyx
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: autonomyx
+
+  # Ingress: only from ingress-system namespace (Traefik/Nginx)
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ingress-system
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+            - port: "3001"
+              protocol: TCP
+
+    # Prometheus scraping (observability namespace)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+
+    # Within namespace
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: autonomyx
+
+  # Egress: DNS + HTTPS to LLM providers + OTel collector
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "11434"
+              protocol: TCP   # Ollama
+            - port: "4317"
+              protocol: TCP   # OTLP gRPC
+            - port: "4318"
+              protocol: TCP   # OTLP HTTP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: autonomyx
