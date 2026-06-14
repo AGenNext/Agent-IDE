@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use crate::lifecycle::LifecycleRegistry;
 use crate::fabric::Fabric;
 use crate::federation::FederationRegistry;
+use crate::usage::UsageMeter;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -79,6 +80,8 @@ pub struct AppState {
     pub fabric: Arc<Fabric>,
     // Federation — real, unique, identifiable, governed, autonomous, federal, accountable, intelligent
     pub federation: FederationRegistry,
+    // Usage meter — usage-based billing: fair, transparent, freedom not free
+    pub usage: UsageMeter,
 }
 
 impl AppState {
@@ -107,6 +110,7 @@ impl AppState {
             lifecycle:  LifecycleRegistry::new(),
             fabric,
             federation: FederationRegistry::new(),
+            usage:      UsageMeter::new(),
         }
     }
 
