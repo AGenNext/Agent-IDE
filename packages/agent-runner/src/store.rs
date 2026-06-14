@@ -1,9 +1,10 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use crate::lifecycle::LifecycleRegistry;
+use crate::fabric::Fabric;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -73,6 +74,8 @@ pub struct AppState {
     pub config:   std::sync::Arc<crate::configdb::ConfigDB>,
     // Lifecycle gate registry — idempotent ACID stage transitions
     pub lifecycle: LifecycleRegistry,
+    // Fabric — framework that fills the gaps between gates
+    pub fabric: Arc<Fabric>,
 }
 
 impl AppState {
@@ -90,6 +93,8 @@ impl AppState {
         // ConfigDB: start with in-memory stub; connect() upgrades async on startup
         let config = std::sync::Arc::new(crate::configdb::ConfigDB::new_sync());
 
+        let fabric = Arc::new(Fabric::new());
+
         Self {
             agents:    RwLock::new(agents),
             runs:      RwLock::new(HashMap::new()),
@@ -97,6 +102,7 @@ impl AppState {
             ws_sinks:  RwLock::new(HashMap::new()),
             config,
             lifecycle: LifecycleRegistry::new(),
+            fabric,
         }
     }
 

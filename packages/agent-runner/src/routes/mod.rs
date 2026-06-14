@@ -6,3 +6,4 @@ pub mod peers;
 pub mod infra;
 pub mod ws;
 pub mod lifecycle;
+pub mod fabric;

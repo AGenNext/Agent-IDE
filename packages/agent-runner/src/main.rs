@@ -5,6 +5,7 @@ mod configdb;
 mod marketplace;
 mod identity;
 mod lifecycle;
+mod fabric;
 mod tools;
 mod providers;
 mod agent;
@@ -46,8 +47,8 @@ async fn main() {
     match configdb::ConfigDB::connect().await {
         Ok(db) => {
             tracing::info!("configdb: SurrealDB connected");
-            // Live queries now active — config changes push to agents natively
-            let _ = db; // will be stored in AppState in next iteration
+            // Wire fabric → SurrealDB so gate events fire live queries
+            state.fabric.wire_surreal(std::sync::Arc::new(db));
         }
         Err(e) => tracing::warn!("configdb: using in-memory stub — {e}"),
     }
@@ -67,6 +68,7 @@ async fn main() {
         .nest("/api",      routes::peers::router(state.clone()))
         .nest("/api",      routes::infra::router())
         .nest("/api",      routes::lifecycle::router(state.clone()))
+        .nest("/api",      routes::fabric::router(state.clone()))
         .nest("/transfer", transfer::router(state.clone()))
         .nest("/ws",       routes::ws::router(state.clone()))
         // Egress policy: enforce push-only on /transfer

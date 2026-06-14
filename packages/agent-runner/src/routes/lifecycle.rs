@@ -58,6 +58,8 @@ async fn transition(
         Stage::Observe  => gate.observe(&req.payload),
         Stage::Feedback => gate.feedback(&req.payload),
     };
+    // Gate result → fabric: fills the gap to the next stage
+    state.fabric.emit_gate(&rec, req.payload);
     Json(rec.into())
 }
 
