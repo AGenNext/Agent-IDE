@@ -1,0 +1,61 @@
+name: Build & Publish (Cloud Native Buildpacks)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+
+jobs:
+  build:
+    name: pack build → GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pack CLI
+        uses: buildpacks/github-actions/setup-pack@v5
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build OCI image with Paketo Buildpacks
+        run: |
+          pack build ${{ env.IMAGE }}:${{ github.sha }} \
+            --builder paketobuildpacks/builder-jammy-base \
+            --publish \
+            --tag ${{ env.IMAGE }}:latest \
+            --tag ${{ env.IMAGE }}:${{ github.ref_name }}
+
+  deploy:
+    name: Deploy to OCI VPS
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    environment: production
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            export GHCR_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+            export GHCR_USER="${{ github.actor }}"
+            bash /opt/deploy/vps-deploy.sh \
+              "${{ env.IMAGE }}:${{ github.sha }}" \
+              "${{ vars.APP_DOMAIN }}" \
+              "${{ vars.APP_PORT || '3000' }}"
