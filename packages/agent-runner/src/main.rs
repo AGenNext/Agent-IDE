@@ -4,6 +4,7 @@ mod gateway;
 mod configdb;
 mod marketplace;
 mod identity;
+mod lifecycle;
 mod tools;
 mod providers;
 mod agent;
@@ -65,6 +66,7 @@ async fn main() {
         .nest("/api",      routes::tools::router(state.clone()))
         .nest("/api",      routes::peers::router(state.clone()))
         .nest("/api",      routes::infra::router())
+        .nest("/api",      routes::lifecycle::router(state.clone()))
         .nest("/transfer", transfer::router(state.clone()))
         .nest("/ws",       routes::ws::router(state.clone()))
         // Egress policy: enforce push-only on /transfer

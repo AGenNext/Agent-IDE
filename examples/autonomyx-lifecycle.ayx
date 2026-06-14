@@ -1,0 +1,169 @@
+// Autonomyx Lifecycle — canonical definition
+//
+// Gates are the keepers. Oaths are their twins.
+// Code is the contract you write.
+// Idempotent: running a gate twice yields the same state.
+
+lifecycle autonomyx {
+
+    // ── Stage ordering ──────────────────────────────────────────────
+    stage build   -> sign;
+    stage sign    -> push;
+    stage push    -> sync;
+    stage sync    -> deploy;
+    stage deploy  -> run;
+    stage run     -> observe;
+    stage observe -> feedback;
+    stage feedback;
+
+    // ── Gate: build ─────────────────────────────────────────────────
+    // Oath: Stacker produced a content-addressed OCI image.
+    gate build {
+        oath stacker_image_built {
+            must digest starts_with "sha256:" ;
+            must digest present "true" ;
+        }
+        require digest  : digest;
+        require platform: string;
+
+        on_open {
+            emit otel_span        with label "lifecycle.build" ;
+            emit surreal_event    with label "gate.build.open" ;
+            emit prometheus_counter with label "autonomyx_gate_open_total" ;
+        }
+    }
+
+    // ── Gate: sign ──────────────────────────────────────────────────
+    // Oath: cosign bundle proves supply chain — no unsigned image passes.
+    gate sign {
+        oath cosign_bundle_present {
+            must cosign_bundle present "true" ;
+        }
+        require digest      : digest;
+        require cosign_bundle: bundle;
+        require signer_did  : id;
+
+        on_open {
+            emit otel_span        with label "lifecycle.sign" ;
+            emit surreal_event    with label "gate.sign.open" ;
+            emit prometheus_counter with label "autonomyx_gate_open_total" ;
+        }
+        on_close {
+            emit surreal_event with label "gate.sign.closed.supply_chain_unverified" ;
+        }
+    }
+
+    // ── Gate: push ──────────────────────────────────────────────────
+    // Oath: image landed in the self-hosted Zot registry with a valid ref.
+    gate push {
+        oath registry_ref_valid {
+            must registry_ref matches "[^/]+/[^:]+:[^:]+" ;
+        }
+        require registry_ref: ref;
+        require digest      : digest;
+
+        on_open {
+            emit otel_span        with label "lifecycle.push" ;
+            emit surreal_event    with label "gate.push.open" ;
+            emit prometheus_counter with label "autonomyx_gate_open_total" ;
+        }
+    }
+
+    // ── Gate: sync ──────────────────────────────────────────────────
+    // Oath: ArgoCD Application is Healthy — GitOps contract fulfilled.
+    gate sync {
+        oath argocd_app_healthy {
+            must argocd_health eq "Healthy" ;
+        }
+        require argocd_health: status;
+        require argocd_app   : string;
+
+        on_open {
+            emit otel_span        with label "lifecycle.sync" ;
+            emit surreal_event    with label "gate.sync.open" ;
+            emit prometheus_counter with label "autonomyx_gate_open_total" ;
+        }
+        on_close {
+            emit surreal_event with label "gate.sync.closed.gitops_not_healthy" ;
+            notify ops ;
+        }
+    }
+
+    // ── Gate: deploy ────────────────────────────────────────────────
+    // Oath: k8s rollout reached desired replicas — cluster state matches intent.
+    gate deploy {
+        oath rollout_ready {
+            must ready_replicas   gte "1" ;
+        }
+        require ready_replicas  : count;
+        require desired_replicas: count;
+        require cluster         : string;
+
+        on_open {
+            emit otel_span        with label "lifecycle.deploy" ;
+            emit surreal_event    with label "gate.deploy.open" ;
+            emit prometheus_counter with label "autonomyx_gate_open_total" ;
+        }
+    }
+
+    // ── Gate: run ───────────────────────────────────────────────────
+    // Oath: agent execution is bound to a known agent — no orphaned runs.
+    gate run {
+        oath run_has_agent {
+            must agent_id present "true" ;
+        }
+        require agent_id: id;
+        require run_id  : id;
+
+        on_open {
+            emit otel_span        with label "lifecycle.run" ;
+            emit surreal_event    with label "gate.run.open" ;
+            emit prometheus_counter with label "autonomyx_gate_open_total" ;
+        }
+    }
+
+    // ── Gate: observe ───────────────────────────────────────────────
+    // Oath: OTel trace recorded — execution is observable.
+    gate observe {
+        oath telemetry_emitted {
+            must trace_id present "true" ;
+        }
+        require trace_id: trace_id;
+        require span_id : string;
+
+        on_open {
+            emit otel_span        with label "lifecycle.observe" ;
+            emit surreal_event    with label "gate.observe.open" ;
+            emit prometheus_counter with label "autonomyx_gate_open_total" ;
+        }
+    }
+
+    // ── Gate: feedback ──────────────────────────────────────────────
+    // Oath: signal has a source — anonymous feedback cannot close the loop.
+    gate feedback {
+        oath signal_has_source {
+            must source present "true" ;
+        }
+        require source  : string;
+        require signal  : string;
+
+        on_open {
+            emit surreal_event      with label "gate.feedback.open" ;
+            emit prometheus_counter with label "autonomyx_gate_open_total" ;
+            notify product ;
+        }
+    }
+
+    // ── Publish at every gate ────────────────────────────────────────
+    publish otel_span        on build;
+    publish otel_span        on sign;
+    publish otel_span        on push;
+    publish otel_span        on sync;
+    publish otel_span        on deploy;
+    publish otel_span        on run;
+    publish otel_span        on observe;
+    publish surreal_event    on feedback;
+    publish prometheus_counter on build;
+    publish prometheus_counter on deploy;
+    publish prometheus_counter on run;
+}

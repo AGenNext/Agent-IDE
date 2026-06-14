@@ -5,3 +5,4 @@ pub mod tools;
 pub mod peers;
 pub mod infra;
 pub mod ws;
+pub mod lifecycle;

@@ -3,6 +3,7 @@ use std::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use crate::lifecycle::LifecycleRegistry;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -70,6 +71,8 @@ pub struct AppState {
     pub ws_sinks: RwLock<HashMap<String, Vec<tokio::sync::broadcast::Sender<String>>>>,
     // ConfigDB handle — SurrealDB (embedded or remote)
     pub config:   std::sync::Arc<crate::configdb::ConfigDB>,
+    // Lifecycle gate registry — idempotent ACID stage transitions
+    pub lifecycle: LifecycleRegistry,
 }
 
 impl AppState {
@@ -88,11 +91,12 @@ impl AppState {
         let config = std::sync::Arc::new(crate::configdb::ConfigDB::new_sync());
 
         Self {
-            agents:   RwLock::new(agents),
-            runs:     RwLock::new(HashMap::new()),
-            peers:    RwLock::new(HashMap::new()),
-            ws_sinks: RwLock::new(HashMap::new()),
+            agents:    RwLock::new(agents),
+            runs:      RwLock::new(HashMap::new()),
+            peers:     RwLock::new(HashMap::new()),
+            ws_sinks:  RwLock::new(HashMap::new()),
             config,
+            lifecycle: LifecycleRegistry::new(),
         }
     }
 
