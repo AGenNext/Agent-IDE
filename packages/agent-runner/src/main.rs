@@ -72,6 +72,7 @@ async fn main() {
         .nest("/api",      routes::infra::router())
         .nest("/api",      routes::lifecycle::router(state.clone()))
         .nest("/api",      routes::fabric::router(state.clone()))
+        .nest("/",         routes::support::router(state.clone()))
         .nest("/transfer", transfer::router(state.clone()))
         .nest("/ws",       routes::ws::router(state.clone()))
         // Egress policy: enforce push-only on /transfer
