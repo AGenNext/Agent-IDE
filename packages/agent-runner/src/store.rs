@@ -5,6 +5,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use crate::lifecycle::LifecycleRegistry;
 use crate::fabric::Fabric;
+use crate::federation::FederationRegistry;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -76,6 +77,8 @@ pub struct AppState {
     pub lifecycle: LifecycleRegistry,
     // Fabric — framework that fills the gaps between gates
     pub fabric: Arc<Fabric>,
+    // Federation — real, unique, identifiable, governed, autonomous, federal, accountable, intelligent
+    pub federation: FederationRegistry,
 }
 
 impl AppState {
@@ -96,13 +99,14 @@ impl AppState {
         let fabric = Arc::new(Fabric::new());
 
         Self {
-            agents:    RwLock::new(agents),
-            runs:      RwLock::new(HashMap::new()),
-            peers:     RwLock::new(HashMap::new()),
-            ws_sinks:  RwLock::new(HashMap::new()),
+            agents:     RwLock::new(agents),
+            runs:       RwLock::new(HashMap::new()),
+            peers:      RwLock::new(HashMap::new()),
+            ws_sinks:   RwLock::new(HashMap::new()),
             config,
-            lifecycle: LifecycleRegistry::new(),
+            lifecycle:  LifecycleRegistry::new(),
             fabric,
+            federation: FederationRegistry::new(),
         }
     }
 

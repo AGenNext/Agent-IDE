@@ -8,6 +8,7 @@ mod lifecycle;
 mod fabric;
 mod bom;
 mod core;
+mod federation;
 mod tools;
 mod providers;
 mod agent;
