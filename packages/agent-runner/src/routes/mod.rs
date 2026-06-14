@@ -11,3 +11,4 @@ pub mod support;
 pub mod usage;
 pub mod platform;
 pub mod apps;
+pub mod onboarding;

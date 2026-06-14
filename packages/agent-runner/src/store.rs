@@ -7,6 +7,7 @@ use crate::lifecycle::LifecycleRegistry;
 use crate::fabric::Fabric;
 use crate::federation::FederationRegistry;
 use crate::usage::UsageMeter;
+use crate::onboarding::OnboardingRegistry;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -112,6 +113,8 @@ pub struct AppState {
     pub federation: FederationRegistry,
     // Usage meter — usage-based billing: fair, transparent, freedom not free
     pub usage: UsageMeter,
+    // Onboarding — chat-based configuration; the chat IS the platform interface
+    pub onboarding: OnboardingRegistry,
 }
 
 impl AppState {
@@ -140,8 +143,9 @@ impl AppState {
             config,
             lifecycle:  LifecycleRegistry::new(),
             fabric,
-            federation: FederationRegistry::new(),
-            usage:      UsageMeter::new(),
+            federation:  FederationRegistry::new(),
+            usage:       UsageMeter::new(),
+            onboarding:  OnboardingRegistry::new(),
         }
     }
 
