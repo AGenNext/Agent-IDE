@@ -124,6 +124,13 @@ export async function cancelRun(runId: string): Promise<void> {
     await apiFetch<unknown>(`/api/runs/${runId}`, { method: 'DELETE' });
 }
 
+export async function invokeTool(toolId: string, input: Record<string, unknown>): Promise<unknown> {
+    return apiFetch<unknown>(`/api/tools/${toolId}/invoke`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+    });
+}
+
 // ─── Auth API ─────────────────────────────────────────────────────────────────
 
 export interface AuthUser {

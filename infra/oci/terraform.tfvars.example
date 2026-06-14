@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars and fill in values
+tenancy_ocid       = "ocid1.tenancy.oc1..xxx"
+user_ocid          = "ocid1.user.oc1..xxx"
+fingerprint        = "xx:xx:xx:xx"
+private_key_path   = "~/.oci/key.pem"
+region             = "us-ashburn-1"
+compartment_ocid   = "ocid1.compartment.oc1..xxx"
+
+app_name           = "arithmetic"
+domain             = "arithmetic.agennext.com"
+container_image    = "ghcr.io/unboxd-cloud/arithmetic-platform:main"
+app_port           = "3000"
+
+# Ubuntu 22.04 ARM — find OCID for your region at:
+# https://docs.oracle.com/en-us/iaas/images/
+ubuntu_image_ocid  = "ocid1.image.oc1.iad.xxx"
+
+ssh_public_key_path = "~/.ssh/id_rsa.pub"
+ocpus              = 2
+memory_gb          = 12
+
+# Optional: for private GHCR images
+ghcr_token         = ""
+ghcr_user          = ""

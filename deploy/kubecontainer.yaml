@@ -1,0 +1,84 @@
+# KubeContainer CRD resource for agent-ide
+# Requires: kubectl apply -f https://github.com/unboxd-agency/KubeContainer/releases/download/v0.1.0/install.yaml
+#
+# Building block only — composed into the full stack by deploy/k3s.yaml.
+# The KubeContainer operator manages pod lifecycle, health gating, and
+# rolling updates. The agent-runner binary (Phase 2) replaces the node image.
+
+apiVersion: containers.unboxd.dev/v1alpha1
+kind: KubeContainer
+metadata:
+  name: agent-ide
+  namespace: agent-ide
+  labels:
+    app.kubernetes.io/name: agent-ide
+    app.kubernetes.io/component: backend
+spec:
+  image: ghcr.io/agennext/agent-ide:main
+  replicas: 1
+
+  ports:
+    - name: ide
+      containerPort: 3000
+      protocol: TCP
+    - name: backend
+      containerPort: 3001
+      protocol: TCP
+
+  env:
+    - name: NODE_ENV
+      value: production
+    - name: PORT
+      value: "3001"
+    - name: WORKSPACE_ROOT
+      value: /data/workspace
+    # Peer transfer gate — set in GitHub Actions secret TRANSFER_API_KEY
+    - name: TRANSFER_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: agent-ide-secrets
+          key: TRANSFER_API_KEY
+          optional: true
+    # Infra instance list (JSON) for MetaPanel
+    - name: INFRA_INSTANCES
+      valueFrom:
+        configMapKeyRef:
+          name: agent-ide-config
+          key: INFRA_INSTANCES
+          optional: true
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+
+  volumeMounts:
+    - name: data
+      mountPath: /data
+
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: agent-ide-data
+
+  health:
+    path: /health
+    port: 3001
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    failureThreshold: 3
+
+  # Rolling update — zero-downtime on image push
+  updateStrategy:
+    type: RollingUpdate
+    maxUnavailable: 0
+    maxSurge: 1
+
+  # Egress-only surface for peer transfer
+  # Ingress gated by Traefik (see deploy/k3s.yaml)
+  networkPolicy:
+    egressEnabled: true
+    ingressFromNamespace: agent-ide
