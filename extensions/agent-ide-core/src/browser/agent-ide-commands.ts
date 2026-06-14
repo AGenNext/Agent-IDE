@@ -18,3 +18,4 @@ export const WorkspacesPanelCommand: Command = { id: 'agentIde.openWorkspaces', 
 export const IdentityPanelCommand:    Command = { id: 'agentIde.openIdentity',    label: 'Open Identity',          category: 'Agent IDE' };
 export const OrchestratePanelCommand: Command = { id: 'agentIde.openOrchestrate', label: 'Open Orchestrate',       category: 'Agent IDE' };
 export const OpenHandsPanelCommand:   Command = { id: 'agentIde.openOpenHands',   label: 'Open OpenHandS',         category: 'Agent IDE' };
+export const MetaPanelCommand:        Command = { id: 'agentIde.openMeta',         label: 'Open Meta',              category: 'Agent IDE' };

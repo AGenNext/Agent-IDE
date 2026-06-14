@@ -642,6 +642,109 @@ app.get('/api/orchestrate/:id', (req: Request, res: Response) => {
     res.json(run);
 });
 
+// ─── Peers ────────────────────────────────────────────────────────────────────
+// In-memory peer store (survives only until restart; persistence is left to the data volume)
+
+interface PeerRecord { id: string; name: string; url: string; status: 'online' | 'offline' | 'unknown'; lastSeen?: string; region?: string; }
+const peerStore = new Map<string, PeerRecord>();
+
+app.get('/api/peers', (_req: Request, res: Response) => {
+    res.json(Array.from(peerStore.values()));
+});
+
+app.post('/api/peers', (req: Request, res: Response) => {
+    const { name, url, region } = req.body as { name?: string; url?: string; region?: string };
+    if (!name || !url) { res.status(400).json({ error: 'name and url are required' }); return; }
+    const id = uuidv4();
+    const peer: PeerRecord = { id, name, url: url.replace(/\/$/, ''), status: 'unknown', region };
+    peerStore.set(id, peer);
+    // Fire-and-forget ping to establish initial status
+    fetch(`${peer.url}/health`, { signal: AbortSignal.timeout(5000) })
+        .then(r => { if (r.ok) { peer.status = 'online'; peer.lastSeen = new Date().toISOString(); } else { peer.status = 'offline'; } })
+        .catch(() => { peer.status = 'offline'; });
+    res.status(201).json(peer);
+});
+
+app.delete('/api/peers/:id', (req: Request, res: Response) => {
+    if (!peerStore.has(req.params['id'] ?? '')) { res.status(404).json({ error: 'Peer not found' }); return; }
+    peerStore.delete(req.params['id'] ?? '');
+    res.json({ deleted: true });
+});
+
+// ─── Transfer (agent teleportation) ──────────────────────────────────────────
+
+// POST /api/transfer — push an agent to a peer (egress-only surface)
+app.post('/api/transfer', async (req: Request, res: Response) => {
+    const { agentId, peerId } = req.body as { agentId?: string; peerId?: string };
+    if (!agentId || !peerId) { res.status(400).json({ error: 'agentId and peerId are required' }); return; }
+
+    const peer = peerStore.get(peerId);
+    if (!peer) { res.status(404).json({ error: 'Peer not found' }); return; }
+
+    const agent = identityStore.getAgent(agentId);
+    if (!agent) { res.status(404).json({ error: 'Agent not found' }); return; }
+
+    const transferKey = process.env.TRANSFER_API_KEY;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (transferKey) headers['Authorization'] = `Bearer ${transferKey}`;
+
+    try {
+        const resp = await fetch(`${peer.url}/transfer/receive`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ agent, sourceUrl: process.env.PUBLIC_URL ?? '' }),
+            signal: AbortSignal.timeout(15000),
+        });
+        if (!resp.ok) {
+            const txt = await resp.text().catch(() => resp.statusText);
+            res.status(502).json({ ok: false, message: `Peer rejected: ${txt}` });
+            return;
+        }
+        peer.status = 'online'; peer.lastSeen = new Date().toISOString();
+        res.json({ ok: true, message: `Agent ${agent.name} transferred to ${peer.name}` });
+    } catch (err: any) {
+        peer.status = 'offline';
+        res.status(502).json({ ok: false, message: `Transfer failed: ${err?.message ?? err}` });
+    }
+});
+
+// POST /transfer/receive — receive an incoming agent from a peer (gated by TRANSFER_API_KEY)
+app.post('/transfer/receive', (req: Request, res: Response) => {
+    const transferKey = process.env.TRANSFER_API_KEY;
+    if (transferKey) {
+        const auth = req.headers.authorization;
+        if (!auth || auth !== `Bearer ${transferKey}`) {
+            res.status(401).json({ error: 'Unauthorized' }); return;
+        }
+    }
+    const { agent, sourceUrl } = req.body as { agent?: any; sourceUrl?: string };
+    if (!agent?.name) { res.status(400).json({ error: 'Invalid agent payload' }); return; }
+
+    const imported = identityStore.createAgent({
+        ownerId: 'user_demo',
+        name: agent.name ?? 'Imported Agent',
+        description: agent.description ?? `Teleported from ${sourceUrl ?? 'peer'}`,
+        model: agent.model ?? 'claude-sonnet-4-6',
+        status: 'idle',
+        capabilities: agent.capabilities ?? [],
+    });
+    console.log(`[transfer] received agent "${imported.name}" (${imported.id}) from ${sourceUrl ?? 'unknown'}`);
+    res.json({ ok: true, importedId: imported.id, name: imported.name });
+});
+
+// ─── Infra instances ──────────────────────────────────────────────────────────
+// Static list from env; extend later with OCI API integration
+
+app.get('/api/infra/instances', (_req: Request, res: Response) => {
+    const raw = process.env.INFRA_INSTANCES ?? '';
+    if (!raw) { res.json([]); return; }
+    try {
+        res.json(JSON.parse(raw));
+    } catch {
+        res.status(500).json({ error: 'INFRA_INSTANCES env is not valid JSON' });
+    }
+});
+
 // ─── 404 fallback ─────────────────────────────────────────────────────────────
 
 app.use((_req: Request, res: Response) => {

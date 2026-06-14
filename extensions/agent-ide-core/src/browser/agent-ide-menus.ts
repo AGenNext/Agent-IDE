@@ -5,7 +5,7 @@ import {
     ArtifactsPanelCommand, RunsPanelCommand, ReplayPanelCommand, GovernancePanelCommand,
     AgentBuilderCommand, PlatformPanelCommand, ResearchPanelCommand, BenchPanelCommand,
     OptimizePanelCommand, McpPanelCommand, WorkspacesPanelCommand, IdentityPanelCommand,
-    OrchestratePanelCommand, OpenHandsPanelCommand,
+    OrchestratePanelCommand, OpenHandsPanelCommand, MetaPanelCommand,
 } from './agent-ide-commands';
 
 const AGENT_IDE_MENU = ['menubar', 'agentide'];
@@ -36,5 +36,6 @@ export class AgentIdeMenuContribution implements MenuContribution {
         menus.registerMenuAction(evalGroup, { commandId: OptimizePanelCommand.id,     order: '04' });
         menus.registerMenuAction(evalGroup, { commandId: OrchestratePanelCommand.id,  order: '05' });
         menus.registerMenuAction(evalGroup, { commandId: OpenHandsPanelCommand.id,    order: '06' });
+        menus.registerMenuAction(evalGroup, { commandId: MetaPanelCommand.id,         order: '07' });
     }
 }

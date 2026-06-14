@@ -22,6 +22,7 @@ import { WorkspacesPanelWidget, WorkspacesPanelContribution } from './panels/wor
 import { IdentityPanelWidget, IdentityPanelContribution } from './panels/identity-panel-widget';
 import { OrchestratePanelWidget, OrchestratePanelContribution } from './panels/orchestrate-panel-widget';
 import { OpenHandsPanelWidget, OpenHandsPanelContribution } from './panels/openhands-panel-widget';
+import { MetaPanelWidget, MetaPanelContribution } from './panels/meta-panel-widget';
 
 function bindPanel<W, C>(bind: any, Widget: any, Contribution: any): void {
     bindViewContribution(bind, Contribution);
@@ -69,5 +70,6 @@ export default new ContainerModule(bind => {
     bindPanel(bind, BenchPanelWidget,        BenchPanelContribution);
     bindPanel(bind, OrchestratePanelWidget,  OrchestratePanelContribution);
     bindPanel(bind, OpenHandsPanelWidget,    OpenHandsPanelContribution);
+    bindPanel(bind, MetaPanelWidget,         MetaPanelContribution);
 
 });
