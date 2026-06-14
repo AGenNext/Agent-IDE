@@ -1,0 +1,334 @@
+# Autonomyx Kubernetes Custom Resource Definitions
+#
+# Makes Autonomyx k8s-native — declare agents and applications as k8s resources.
+# The controller (autonomyx-runner) watches these CRDs and drives lifecycle gates.
+#
+# CRDs:
+#   AutonomyxAgent       — a governed, DID-identified agent
+#   AutonomyxApplication — a named collection of agents (the product)
+#   AutonomyxGate        — a lifecycle gate transition (idempotent, signed)
+#
+# "Single stack, multi pack" — one cluster, all packs deployed as CRDs.
+# "End to end everything" — .ayx source → CRD → controller → gate → run → observe → feedback.
+#
+# kubectl apply -f autonomyx-crds.yaml
+# openautonomyx.com
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: autonomyxagents.autonomyx.io
+  labels:
+    app.kubernetes.io/name:    autonomyx
+    app.kubernetes.io/part-of: autonomyx-platform
+  annotations:
+    autonomyx/philosophy: "everyone and everything is an agent"
+spec:
+  group: autonomyx.io
+  names:
+    kind:     AutonomyxAgent
+    listKind: AutonomyxAgentList
+    plural:   autonomyxagents
+    singular: autonomyxagent
+    shortNames: ["axa", "agent"]
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served:  true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [name, intelligence]
+              properties:
+                name:
+                  type: string
+                  description: "Human-readable agent name"
+                description:
+                  type: string
+                version:
+                  type: string
+                  default: "0.1.0"
+                # Identity — Real, Unique, Identifiable
+                did:
+                  type: string
+                  description: "did:autonomyx:<pubkey> — assigned at build gate"
+                  pattern: "^did:autonomyx:.+$"
+                # Intelligence binding — any provider, any model
+                intelligence:
+                  type: object
+                  required: [provider, model]
+                  properties:
+                    provider:
+                      type: string
+                      enum: [anthropic, openai, ollama, groq, mistral, custom]
+                    model:
+                      type: string
+                      example: "claude-opus-4-8"
+                    mode:
+                      type: string
+                      enum: [adaptive, chain, direct, orchestrator, subagent, swarm, pipeline, reactive]
+                      default: adaptive
+                    apiKeyEnv:
+                      type: string
+                      description: "Env var name containing the API key — never the key itself"
+                # Governance — per-DID, JIT, no standing permissions
+                governance:
+                  type: object
+                  properties:
+                    maxGrantTtlSecs:
+                      type: integer
+                      default: 3600
+                    allowedCapabilities:
+                      type: array
+                      items: { type: string }
+                    requireMfa:
+                      type: boolean
+                      default: false
+                    auditAll:
+                      type: boolean
+                      default: true
+                    federationLevel:
+                      type: string
+                      enum: [local, federated, public]
+                      default: local
+                # Tools the agent can use
+                tools:
+                  type: array
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name: { type: string }
+                      url:  { type: string }
+                # Usage budget
+                budget:
+                  type: object
+                  properties:
+                    monthlyUsd:    { type: number, default: 10.0 }
+                    onExceed:
+                      type: string
+                      enum: [pause, warn, continue]
+                      default: pause
+                # Deployment target
+                deploy:
+                  type: object
+                  properties:
+                    target:
+                      type: string
+                      enum: [k3s, k8s, aws, gcp, azure, hetzner, local]
+                      default: k3s
+                    namespace:
+                      type: string
+                      default: autonomyx
+                    image:
+                      type: string
+                # .ayx source declaration
+                ayxSource:
+                  type: string
+                  description: ".ayx theory declaration — the contract"
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Pending, Building, Signing, Pushing, Syncing, Deploying, Running, Observing, Feedback, Failed]
+                did:
+                  type: string
+                currentGate:
+                  type: string
+                lastTransition:
+                  type: string
+                  format: date-time
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:               { type: string }
+                      status:             { type: string, enum: ["True", "False", "Unknown"] }
+                      reason:             { type: string }
+                      message:            { type: string }
+                      lastTransitionTime: { type: string, format: date-time }
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name:     Phase
+          type:     string
+          jsonPath: .status.phase
+        - name:     DID
+          type:     string
+          jsonPath: .status.did
+        - name:     Provider
+          type:     string
+          jsonPath: .spec.intelligence.provider
+        - name:     Model
+          type:     string
+          jsonPath: .spec.intelligence.model
+        - name:     Gate
+          type:     string
+          jsonPath: .status.currentGate
+        - name:     Age
+          type:     date
+          jsonPath: .metadata.creationTimestamp
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: autonomyxapplications.autonomyx.io
+  labels:
+    app.kubernetes.io/name:    autonomyx
+    app.kubernetes.io/part-of: autonomyx-platform
+  annotations:
+    autonomyx/philosophy: "application is the product"
+spec:
+  group: autonomyx.io
+  names:
+    kind:     AutonomyxApplication
+    listKind: AutonomyxApplicationList
+    plural:   autonomyxapplications
+    singular: autonomyxapplication
+    shortNames: ["axapp", "ayxapp"]
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served:  true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [name]
+              properties:
+                name:         { type: string }
+                description:  { type: string }
+                version:      { type: string, default: "0.1.0" }
+                did:
+                  type: string
+                  pattern: "^did:autonomyx:.+$"
+                # Agents that compose this application
+                agents:
+                  type: array
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name: { type: string }
+                      ref:  { type: string, description: "AutonomyxAgent name in same namespace" }
+                      role: { type: string }
+                # Lifecycle gate configuration
+                lifecycle:
+                  type: object
+                  properties:
+                    gates:
+                      type: array
+                      items:
+                        type: object
+                        required: [stage, oath]
+                        properties:
+                          stage:
+                            type: string
+                            enum: [build, sign, push, sync, deploy, run, observe, feedback]
+                          oath:   { type: string }
+                          config: { type: object, x-kubernetes-preserve-unknown-fields: true }
+                # Usage budget
+                budget:
+                  type: object
+                  properties:
+                    monthlyUsd: { type: number, default: 50.0 }
+                    onExceed:   { type: string, enum: [pause, warn, continue], default: pause }
+                # Deployment
+                deploy:
+                  type: object
+                  properties:
+                    target: { type: string, default: k3s }
+                    namespace: { type: string, default: autonomyx }
+                # .ayx theory
+                ayxSource: { type: string }
+            status:
+              type: object
+              properties:
+                phase:     { type: string }
+                did:       { type: string }
+                currentGate: { type: string }
+                agentCount:  { type: integer }
+                lastTransition: { type: string, format: date-time }
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase,   type: string, jsonPath: .status.phase
+        - name: DID,     type: string, jsonPath: .status.did
+        - name: Agents,  type: integer, jsonPath: .status.agentCount
+        - name: Gate,    type: string, jsonPath: .status.currentGate
+        - name: Age,     type: date,   jsonPath: .metadata.creationTimestamp
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: autonomyxgates.autonomyx.io
+  labels:
+    app.kubernetes.io/name:    autonomyx
+    app.kubernetes.io/part-of: autonomyx-platform
+  annotations:
+    autonomyx/philosophy: "gate as the keeper, oath as its keeper twin"
+spec:
+  group: autonomyx.io
+  names:
+    kind:     AutonomyxGate
+    listKind: AutonomyxGateList
+    plural:   autonomyxgates
+    singular: autonomyxgate
+    shortNames: ["axg"]
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served:  true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [artifactRef, stage, oath]
+              properties:
+                artifactRef:
+                  type: string
+                  description: "Name of the AutonomyxAgent or AutonomyxApplication"
+                stage:
+                  type: string
+                  enum: [build, sign, push, sync, deploy, run, observe, feedback]
+                oath:
+                  type: string
+                  description: "Named invariant predicate — must hold for gate to open"
+                actorDid:
+                  type: string
+                grantId:
+                  type: string
+                payload:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              properties:
+                gateStatus:
+                  type: string
+                  enum: [pending, open, closed, already]
+                gateId:    { type: string }
+                detail:    { type: string }
+                transitionedAt: { type: string, format: date-time }
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Stage,    type: string, jsonPath: .spec.stage
+        - name: Status,   type: string, jsonPath: .status.gateStatus
+        - name: Oath,     type: string, jsonPath: .spec.oath
+        - name: Age,      type: date,   jsonPath: .metadata.creationTimestamp

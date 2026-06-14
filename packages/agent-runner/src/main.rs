@@ -29,6 +29,7 @@ mod onboarding;
 mod mcp;
 mod hardening;
 mod contract;
+mod controller;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -178,6 +179,11 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await.expect("bind failed");
+
+    // ── Controller — CRD reconciliation loop ─────────────────────────────────
+    // Watches AutonomyxAgent + AutonomyxApplication CRDs and drives gates.
+    // End to end: declaration → build → sign → push → deploy → run → observe.
+    controller::start(state.clone());
 
     // Log hardened attack surface at boot
     hardening::log_surface();
