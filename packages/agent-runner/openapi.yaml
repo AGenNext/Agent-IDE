@@ -1,0 +1,721 @@
+openapi: "3.1.0"
+
+info:
+  title: Autonomyx Platform API
+  version: "0.1.0"
+  description: |
+    **Multi-ecosystem. Single world model. Everyone and everything is an agent.**
+
+    The Autonomyx platform API. Every agent, application, gate, and event
+    is reachable through this interface.
+
+    - **Agents** — real, unique, identifiable, governed, autonomous, federal, accountable, intelligent
+    - **Applications** — the product; the .ayx declaration made real
+    - **Lifecycle gates** — idempotent ACID transitions: build→sign→push→sync→deploy→run→observe→feedback
+    - **Fabric** — the nervous system; fills every gap between gates
+    - **Federation** — W3C DID Core 1.1; `did:autonomyx:<pubkey>`; local-first resolution
+    - **Usage** — metered at the gate; micro-cent precision; $0 for self-hosted
+    - **Onboarding** — chat-based configuration; describe it, the platform builds it
+    - **Stream** — WebSocket; unified real-time event transport
+
+    All routes except `/health` require Bearer authentication.
+    All gate transitions record a signed accountability entry.
+    Deny or accept is a right. Consent is a first-class primitive.
+
+    openautonomyx.com
+  contact:
+    name: Autonomyx
+    url: https://openautonomyx.com
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:3001
+    description: Local development
+  - url: https://api.openautonomyx.com
+    description: Production
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key (set GATEWAY_API_KEY env var)
+
+  schemas:
+    Agent:
+      type: object
+      properties:
+        id:          { type: string, example: "agent_abc123" }
+        owner_id:    { type: string, example: "user_demo" }
+        name:        { type: string, example: "Research Agent" }
+        description: { type: string }
+        model:       { type: string, example: "claude-opus-4-8" }
+        status:      { type: string, enum: [idle, running, error] }
+        capabilities:{ type: array, items: { type: string } }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    Application:
+      type: object
+      properties:
+        id:          { type: string, example: "app_abc123" }
+        owner_id:    { type: string }
+        name:        { type: string, example: "MyApp" }
+        description: { type: string }
+        version:     { type: string, example: "0.1.0" }
+        did:         { type: string, nullable: true, example: "did:autonomyx:abc123" }
+        status:
+          type: string
+          enum: [draft, building, live, paused, retired]
+        agents:      { type: array, items: { type: string } }
+        ayx_source:  { type: string, nullable: true }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    GateRecord:
+      type: object
+      properties:
+        id:       { type: string }
+        artifact: { type: string }
+        stage:
+          type: string
+          enum: [build, sign, push, sync, deploy, run, observe, feedback]
+        status:
+          type: string
+          enum: [open, closed, already]
+        oath:     { type: string }
+        detail:   { type: string, nullable: true }
+
+    UsageRecord:
+      type: object
+      properties:
+        id:                    { type: string }
+        did:                   { type: string }
+        artifact:              { type: string }
+        stage:                 { type: string }
+        provider:              { type: string, example: "anthropic" }
+        model:                 { type: string, example: "claude-opus-4-8" }
+        tokens_in:             { type: integer }
+        tokens_out:            { type: integer }
+        compute_ms:            { type: integer }
+        total_cost_usd_mc:     { type: integer, description: "USD micro-cents (1_000_000 = $1.00)" }
+        recorded_at:           { type: string, format: date-time }
+
+    OnboardingSession:
+      type: object
+      properties:
+        id:         { type: string }
+        owner_id:   { type: string }
+        stage:
+          type: string
+          enum: [welcome, purpose, intelligence, agents, governance, deployment, review, complete]
+        config:     { type: object }
+        app_id:     { type: string, nullable: true }
+        app_did:    { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+paths:
+
+  # ── Health ─────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      summary: Platform health
+      description: Returns platform status. No auth required.
+      security: []
+      tags: [Health]
+      responses:
+        "200":
+          description: Platform is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "ok" }
+
+  # ── Platform identity ───────────────────────────────────────────────────────
+
+  /api/platform:
+    get:
+      summary: Platform identity and cloud context
+      description: Returns platform name, version, capabilities, ecosystems, and detected cloud provider.
+      tags: [Platform]
+      responses:
+        "200":
+          description: Platform identity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  platform:     { type: object }
+                  runtime:      { type: object }
+                  capabilities: { type: array, items: { type: string } }
+                  ecosystems:   { type: array, items: { type: string } }
+
+  /api/theory:
+    get:
+      summary: The theory of everything
+      description: |
+        The world model. Axioms. Platform equation.
+        "Everything is an agent. Platform makes things real."
+      tags: [Platform]
+      responses:
+        "200":
+          description: World model
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # ── Agents ──────────────────────────────────────────────────────────────────
+
+  /api/agents:
+    get:
+      summary: List all agents
+      tags: [Agents]
+      responses:
+        "200":
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Agent" }
+    post:
+      summary: Create a new agent
+      tags: [Agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                owner_id:    { type: string }
+                name:        { type: string }
+                description: { type: string }
+                model:       { type: string, default: "claude-opus-4-8" }
+      responses:
+        "200":
+          description: Created agent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+
+  /api/agents/{id}:
+    get:
+      summary: Get agent by ID
+      tags: [Agents]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Agent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+
+  # ── Applications ─────────────────────────────────────────────────────────────
+
+  /api/apps:
+    get:
+      summary: List all applications
+      description: "Application is the product. Every .ayx declaration that has been instantiated."
+      tags: [Applications]
+      responses:
+        "200":
+          description: Application list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apps:  { type: array, items: { $ref: "#/components/schemas/Application" } }
+                  count: { type: integer }
+    post:
+      summary: Create a new application
+      tags: [Applications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner_id, name]
+              properties:
+                owner_id:    { type: string }
+                name:        { type: string }
+                description: { type: string }
+                version:     { type: string, default: "0.1.0" }
+                ayx_source:  { type: string, description: ".ayx declaration (the theory)" }
+      responses:
+        "200":
+          description: Created application
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  app: { $ref: "#/components/schemas/Application" }
+
+  /api/apps/philosophy:
+    get:
+      summary: Application philosophy
+      tags: [Applications]
+      responses:
+        "200":
+          description: Why applications are the product
+
+  /api/apps/{id}:
+    get:
+      summary: Get application by ID
+      tags: [Applications]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Application
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  app: { $ref: "#/components/schemas/Application" }
+
+  /api/apps/{id}/activate:
+    post:
+      summary: Activate application (open build gate, assign DID)
+      description: Opens the build gate. Assigns a `did:autonomyx` DID. Transitions to live.
+      tags: [Applications]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Application is live
+
+  /api/apps/{id}/agents:
+    post:
+      summary: Bind an agent to an application
+      tags: [Applications]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id]
+              properties:
+                agent_id: { type: string }
+      responses:
+        "200":
+          description: Agent bound
+
+  /api/apps/{id}/upgrade:
+    put:
+      summary: Upgrade application version
+      description: |
+        Additive upgrade. Old version stays live until new one passes all gates.
+        No conflict. No downtime. Backward compatible.
+      tags: [Applications]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:    { type: string }
+                model:      { type: string }
+                cloud:      { type: string }
+                ayx_source: { type: string }
+      responses:
+        "200":
+          description: Upgrade initiated
+
+  /api/apps/{id}/upgrade/options:
+    get:
+      summary: Available upgrade paths
+      description: Intelligence tier, infra tier, support tier options.
+      tags: [Applications]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Upgrade options
+
+  /api/apps/{id}/consent:
+    post:
+      summary: Accept or deny an action (consent right)
+      description: |
+        **Deny or accept is a right.** Every application can refuse any action
+        that violates its governance policy. Consent is a first-class primitive.
+        No action may be taken without the owner's explicit grant.
+      tags: [Applications]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, decision]
+              properties:
+                action:   { type: string }
+                decision:
+                  type: string
+                  enum: [accept, deny]
+                reason:   { type: string }
+      responses:
+        "200":
+          description: Consent recorded, gate opened or closed
+
+  # ── Lifecycle gates ──────────────────────────────────────────────────────────
+
+  /api/lifecycle/transition:
+    post:
+      summary: Transition through a lifecycle gate
+      description: |
+        Every transition is:
+        - Oath-checked (gate's twin invariant predicate)
+        - Idempotent (same input → same output, safe to retry)
+        - Accountability-pinned (signed record in federation)
+        - Usage-metered (real-time micro-transaction)
+        - Fabric-emitted (downstream handlers fire)
+      tags: [Lifecycle]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [artifact, stage, payload]
+              properties:
+                artifact:  { type: string }
+                stage:
+                  type: string
+                  enum: [build, sign, push, sync, deploy, run, observe, feedback]
+                payload:   { type: object }
+                actor_did: { type: string, description: "DID of the agent requesting this transition" }
+                grant_id:  { type: string, description: "JIT access grant authorising this action" }
+      responses:
+        "200":
+          description: Gate record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GateRecord" }
+
+  /api/lifecycle/log:
+    get:
+      summary: Full lifecycle audit log
+      tags: [Lifecycle]
+      responses:
+        "200":
+          description: All gate records
+
+  /api/lifecycle/{artifact}/log:
+    get:
+      summary: Gate log for a specific artifact
+      tags: [Lifecycle]
+      parameters:
+        - { name: artifact, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Gate records for artifact
+
+  /api/lifecycle/{artifact}/stage:
+    get:
+      summary: Current lifecycle stage for an artifact
+      tags: [Lifecycle]
+      parameters:
+        - { name: artifact, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Current stage
+
+  # ── Runs ───────────────────────────────────────────────────────────────────
+
+  /api/runs:
+    get:
+      summary: List all agent runs
+      tags: [Runs]
+      responses:
+        "200":
+          description: Run list
+    post:
+      summary: Start a new agent run
+      tags: [Runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id, task]
+              properties:
+                agent_id: { type: string }
+                task:     { type: string }
+                model:    { type: string }
+                api_key:  { type: string, description: "Optional; falls back to env vars" }
+      responses:
+        "200":
+          description: Run started
+
+  /api/runs/{id}:
+    get:
+      summary: Get run by ID
+      tags: [Runs]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Run details
+
+  # ── Usage ──────────────────────────────────────────────────────────────────
+
+  /api/usage:
+    get:
+      summary: Platform usage summary
+      description: |
+        Freedom, not free. Fair and transparent. Every cost visible.
+        Self-hosted = $0 token cost. Provider rates pass-through, no markup.
+      tags: [Usage]
+      responses:
+        "200":
+          description: Usage summary + pricing philosophy
+
+  /api/usage/pricing:
+    get:
+      summary: Published provider rates
+      tags: [Usage]
+      responses:
+        "200":
+          description: Provider pricing + what we charge / don't charge
+
+  /api/usage/all:
+    get:
+      summary: All usage records
+      tags: [Usage]
+      responses:
+        "200":
+          description: Every usage record
+
+  /api/usage/{did}:
+    get:
+      summary: Usage for a specific DID
+      tags: [Usage]
+      parameters:
+        - { name: did, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Per-DID usage + budget
+
+  # ── Onboarding ─────────────────────────────────────────────────────────────
+
+  /api/onboarding/start:
+    post:
+      summary: Start a chat onboarding session
+      description: |
+        The chat IS the configuration interface. No forms. No YAML.
+        Describe what you want to build. The platform builds it.
+      tags: [Onboarding]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                owner_id: { type: string }
+      responses:
+        "200":
+          description: Session started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: { type: string }
+                  message:    { type: string }
+                  stage:      { type: string }
+
+  /api/onboarding/{id}:
+    get:
+      summary: Get onboarding session state
+      tags: [Onboarding]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Session state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OnboardingSession" }
+
+  /api/onboarding/{id}/chat:
+    post:
+      summary: Send a chat message to the onboarding assistant
+      description: |
+        Send a message. The platform responds and advances configuration.
+        Powered by any configured LLM (Anthropic/OpenAI/Ollama).
+        Falls back to scripted mode if no LLM key is set.
+      tags: [Onboarding]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+                model:   { type: string, default: "claude-opus-4-8" }
+                api_key: { type: string }
+      responses:
+        "200":
+          description: Assistant response + updated config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:    { type: string }
+                  stage:      { type: string }
+                  config:     { type: object }
+                  app_id:     { type: string, nullable: true }
+                  app_did:    { type: string, nullable: true }
+
+  /api/onboarding/{id}/confirm:
+    post:
+      summary: Confirm configuration and create the application
+      description: Skips the LLM and directly creates the application from the assembled config.
+      tags: [Onboarding]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Application created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  app_id:  { type: string }
+                  app_did: { type: string }
+                  ayx:     { type: string }
+
+  # ── Fabric ─────────────────────────────────────────────────────────────────
+
+  /api/fabric/handlers:
+    get:
+      summary: Registered fabric handlers
+      tags: [Fabric]
+      responses:
+        "200":
+          description: Handler list
+
+  /api/fabric/dead-letters:
+    get:
+      summary: Dead-letter queue (failed events)
+      tags: [Fabric]
+      responses:
+        "200":
+          description: Failed events
+
+  # ── Peers (federation) ─────────────────────────────────────────────────────
+
+  /api/peers:
+    get:
+      summary: List federated peers
+      tags: [Federation]
+      responses:
+        "200":
+          description: Peer list
+    post:
+      summary: Register a new peer node
+      tags: [Federation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url]
+              properties:
+                name:   { type: string }
+                url:    { type: string }
+                region: { type: string }
+      responses:
+        "200":
+          description: Peer registered
+
+  # ── WebSocket streams ───────────────────────────────────────────────────────
+
+  /ws/{run_id}:
+    get:
+      summary: Live run event stream (WebSocket)
+      description: Subscribe to step-by-step events for a specific agent run.
+      tags: [Stream]
+      parameters:
+        - { name: run_id, in: path, required: true, schema: { type: string } }
+
+  /ws/fabric:
+    get:
+      summary: Fabric event stream (WebSocket)
+      description: |
+        Real-time stream of all gate transitions, dead-letters, and peer events.
+        The fabric is the nervous system. This is how it speaks.
+      tags: [Stream]
+
+  /ws/stream:
+    get:
+      summary: Unified platform stream (WebSocket)
+      description: |
+        Everything in one channel: fabric events, usage deltas, accountability records.
+        Send `snapshot:usage` to request current usage summary inline.
+        Standards-compliant (MDN WebSockets API). Ping/Pong keepalive.
+      tags: [Stream]
+
+tags:
+  - name: Health
+    description: Platform health
+  - name: Platform
+    description: Platform identity, world model, cloud context
+  - name: Agents
+    description: Agent CRUD — real, unique, governed agents
+  - name: Applications
+    description: Application lifecycle — the product, declaration to reality
+  - name: Lifecycle
+    description: Idempotent lifecycle gates — build through feedback
+  - name: Runs
+    description: Agent execution runs
+  - name: Usage
+    description: Usage-based billing — freedom not free, fair and transparent
+  - name: Onboarding
+    description: Chat-based configuration — describe it, the platform builds it
+  - name: Fabric
+    description: Event fabric — the nervous system between gates
+  - name: Federation
+    description: DID federation and peer nodes
+  - name: Stream
+    description: Real-time WebSocket event transport
