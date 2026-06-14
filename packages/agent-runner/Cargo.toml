@@ -12,8 +12,8 @@ path = "src/main.rs"
 # Transport
 axum              = { version = "0.7",  features = ["ws", "macros"] }
 axum-extra        = { version = "0.9",  features = ["typed-header"] }
-tower             = "0.4"
-tower-http        = { version = "0.5", features = ["cors", "trace"] }
+tower             = { version = "0.4", features = ["timeout", "limit"] }
+tower-http        = { version = "0.5", features = ["cors", "trace", "timeout", "limit"] }
 tokio             = { version = "1",   features = ["full"] }
 tokio-tungstenite = "0.21"
 

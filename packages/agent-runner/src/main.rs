@@ -2,6 +2,8 @@
 //
 // Single binary. All gates. All fabric. All federation. MCP server.
 // Runs on any OS (Linux/macOS/Windows), any cloud, any infra.
+// Hardened surface: rate limit, body limit, security headers, auth failure tracking.
+// Deny by default. Prove identity before opening any gate.
 // Freedom, not free. openautonomyx.com
 
 mod store;
@@ -25,14 +27,18 @@ mod cli;
 mod cloud;
 mod onboarding;
 mod mcp;
+mod hardening;
 
 use axum::{middleware, Router};
+use axum::extract::DefaultBodyLimit;
 use cli::Cli;
 use clap::Parser;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
+use tower_http::timeout::TimeoutLayer;
 use tracing_subscriber::{fmt, EnvFilter};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use store::AppState;
 
@@ -64,6 +70,28 @@ async fn main() {
         region  = ?cloud_ctx.region,
         "Autonomyx platform starting"
     );
+
+    // ── Hardening ─────────────────────────────────────────────────────────────
+    let rate_limiter = Arc::new(hardening::RateLimiter::new());
+
+    // Prune stale rate-limit buckets every 5 minutes (prevent memory growth)
+    {
+        let rl = rate_limiter.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            loop { interval.tick().await; rl.prune(); }
+        });
+    }
+
+    // Request timeout — kill slow requests before they exhaust threads
+    let request_timeout_secs: u64 = std::env::var("REQUEST_TIMEOUT_SECS")
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+
+    // Body size limit — 4MB hard cap, path-specific limits in request_guard
+    let body_limit_bytes: usize = std::env::var("BODY_LIMIT_BYTES")
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or(4 * 1024 * 1024);
 
     // ── State ─────────────────────────────────────────────────────────────────
     let state = Arc::new(AppState::new());
@@ -126,19 +154,35 @@ async fn main() {
         // MCP server — platform as AI tool
         .nest("/", routes::mcp::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
-        .layer(middleware::from_fn(gateway::egress_policy))   // egress control
-        .layer(middleware::from_fn(gateway::ingress_gate))    // Bearer auth
+        // Layer order: last added = outermost (first to run on request, last on response)
+        .layer(middleware::from_fn(gateway::egress_policy))       // 5. egress: push-only /transfer
+        .layer(middleware::from_fn(gateway::ingress_gate))        // 4. auth: Bearer token, constant-time
+        .layer(middleware::from_fn({
+            let rl = rate_limiter.clone();
+            move |req, next| {
+                let rl = rl.clone();
+                hardening::rate_limit(req, next, rl)
+            }
+        }))                                                        // 3. rate: per-IP token bucket
+        .layer(middleware::from_fn(hardening::request_guard))     // 2. guard: path + size check
+        .layer(middleware::from_fn(hardening::security_headers))  // 1. headers: HSTS, CSP, X-Frame
+        .layer(DefaultBodyLimit::max(body_limit_bytes))           //    body: 4MB hard cap
+        .layer(TimeoutLayer::new(Duration::from_secs(request_timeout_secs))) // timeout: 30s
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
         .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await.expect("bind failed");
 
+    // Log hardened attack surface at boot
+    hardening::log_surface();
+
     tracing::info!(
         port    = port,
         routes  = "health, agents, apps, runs, lifecycle, fabric, peers, tools, infra, usage, platform, onboarding, support, transfer, ws, mcp",
         mcp     = "POST /mcp (JSON-RPC 2.0)",
         stream  = "WS /ws/stream (unified), /ws/fabric, /ws/:run_id",
+        fabric  = "middleware between all gates — fills every gap, no polling",
         "Autonomyx platform ready — openautonomyx.com"
     );
 
