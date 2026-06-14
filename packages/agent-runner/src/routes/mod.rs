@@ -12,3 +12,4 @@ pub mod usage;
 pub mod platform;
 pub mod apps;
 pub mod onboarding;
+pub mod mcp;
