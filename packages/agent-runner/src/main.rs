@@ -36,6 +36,7 @@ mod storage;
 mod govgraph;
 mod computekube;
 mod goals;
+mod dashboard;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -173,6 +174,8 @@ async fn main() {
         .nest("/api", routes::computekube::router(state.clone()))
         // Goals — purpose-driven agents; alignment → activation → impact → loop
         .nest("/api", routes::goals::router(state.clone()))
+        // Dashboards — custom views over the full platform world model
+        .nest("/api", routes::dashboard::router(state.clone()))
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────

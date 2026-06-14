@@ -12,6 +12,7 @@ use crate::blockchain::BlockchainBridge;
 use crate::storage::StorageRegistry;
 use crate::govgraph::GovernanceGraph;
 use crate::goals::GoalRegistry;
+use crate::dashboard::DashboardRegistry;
 use crate::computekube::ComputeKube;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
@@ -130,6 +131,8 @@ pub struct AppState {
     pub computekube: ComputeKube,
     // Goals — purpose-driven agents; mission → goal → objective → impact → loop
     pub goals: GoalRegistry,
+    // Dashboards — custom views; 4 built-in + unlimited custom
+    pub dashboards: DashboardRegistry,
 }
 
 impl AppState {
@@ -166,6 +169,7 @@ impl AppState {
             govgraph:    GovernanceGraph::new(),
             computekube: ComputeKube::new(),
             goals:       GoalRegistry::new(),
+            dashboards:  DashboardRegistry::new(),
         }
     }
 
