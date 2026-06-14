@@ -1,0 +1,190 @@
+// Autonomyx Worlds — the same agent in every execution environment.
+// Identity is a primitive. Access is universal but fine-grained and JIT.
+
+// ── Identity (first-class primitive — not a layer) ────────────────────────────
+
+@schema("schema:Person")
+identity node-identity {
+    key_type:  ed25519
+    storage:   k8s_secret       // never committed to git
+    rotate: { interval: 30d, on_peer_request: true }
+
+    // What this node can do (verifiable credentials)
+    credential agent-runner {
+        type:   agent_capability
+        scope:  ["run_agent", "use_tools", "transfer_peer"]
+        ttl:    1h               // JIT — credentials expire
+    }
+
+    credential marketplace-access {
+        type:   operator_access
+        scope:  ["openai/*", "ollama/*", "anthropic/*"]
+        ttl:    24h
+    }
+
+    // Who we trust (peer DIDs — not IPs, not UUIDs)
+    trust "did:autonomyx:EUEdgeNode7xK9mNpQrT" {
+        capabilities: ["peer_transfer", "run_agent"]
+        expires:      7d
+        require_mtls: true
+    }
+    trust "did:autonomyx:APEdgeNodeZ3vWsY8bLm" {
+        capabilities: ["peer_transfer"]
+        expires:      7d
+        require_mtls: true
+    }
+}
+
+// ── Access (universal but fine-grained and JIT) ────────────────────────────────
+// Every access request produces a short-lived signed grant.
+// No standing permissions. Grant expires after use or TTL, whichever comes first.
+
+// Access rules are declared in the contract (network enforces them):
+contract access-policy {
+    enforce:  network
+    mtls:     required
+
+    traffic {
+        strategy: latency_weighted
+        primary:  "openai/openai-direct/gpt4o" weight: 60
+        fallback: "ollama/local/llama3"          weight: 30
+        canary:   "anthropic/anthropic-direct/opus" weight: 10
+        header_routing: true    // X-Autonomyx-Profile overrides weights
+    }
+
+    retry { attempts: 3, backoff: exponential, on: [5xx, connect-failure] }
+
+    observability {
+        traces:   true
+        metrics:  true
+        sampling: 1.0
+    }
+}
+
+// ── Worlds — deploy the same agent everywhere ─────────────────────────────────
+
+@schema("schema:VirtualLocation")
+world browser-world {
+    target:  browser
+    runtime: autonomyx_wasm
+    agent:   ResearchAgent
+
+    deploy: { wasm: "dist/autonomyx-agent.wasm" }
+
+    perception: dom           // browser DOM + A11y tree
+    actions:    [click, type, navigate, scroll, http, tool_call]
+
+    constraints: {
+        max_mem:    "50Mi"
+        no_std:     false     // WASM has std via wasm-bindgen
+        offline:    false
+    }
+}
+
+@schema("schema:VirtualLocation")
+world server-world {
+    target:  server
+    runtime: autonomyx_rust
+    agent:   DeepThinkAgent
+
+    deploy: { binary: "/usr/local/bin/autonomyx-runner" }
+
+    perception: filesystem
+    actions:    [shell, filesystem, http, grpc, ws, tool_call, peer_transfer]
+
+    replicas: 3
+    region:   "$REGION"
+}
+
+@schema("schema:VirtualLocation")
+world edge-world {
+    target:  edge
+    runtime: autonomyx_edge
+    agent:   ResearchAgent
+
+    deploy: { binary: "dist/autonomyx-edge" }
+
+    perception: network
+    actions:    [http, ws, tool_call, peer_transfer]
+
+    // Branching at the edge using live network data
+    // Routes to the fastest available profile based on measured latency
+    constraints: {
+        max_mem: "128Mi"
+    }
+    region: "global"
+}
+
+@schema("schema:VirtualLocation")
+world mobile-ios {
+    target:  mobile
+    runtime: autonomyx_ios        // Swift/UniFFI bindings
+
+    deploy: { binary: "Frameworks/AutonomyxAgent.xcframework" }
+
+    perception: api               // REST tool calls from mobile
+    actions:    [http, tool_call, push_notification, haptic]
+
+    constraints: {
+        battery:    true          // battery-aware scheduling
+        offline:    true          // queue tasks when offline
+    }
+}
+
+@schema("schema:VirtualLocation")
+world embedded-esp32 {
+    target:  embedded
+    runtime: autonomyx_bare
+
+    deploy: { binary: "firmware/autonomyx-esp32.bin" }
+
+    perception: sensors           // GPIO, I2C temperature/accelerometer
+    actions:    [gpio, i2c, uart, http]
+
+    constraints: {
+        no_std:  true
+        max_mem: "256Ki"
+        no_network: false         // WiFi available on ESP32
+    }
+}
+
+@schema("schema:VirtualLocation")
+world k8s-prod {
+    target:  k8s
+    runtime: autonomyx_rust
+    agent:   DeepThinkAgent
+
+    deploy: {
+        helm:   "deploy/helm/autonomyx"
+        gitops: "deploy/argocd/autonomyx-app.yaml"
+    }
+
+    perception: api
+    actions:    [http, grpc, ws, shell, tool_call, peer_transfer]
+
+    replicas: 3
+    region:   "eu-west-1"
+}
+
+@schema("schema:VirtualLocation")
+world desktop-theia {
+    target:  desktop
+    runtime: autonomyx_node       // Theia extension (replaceable — see backend-module.ts)
+    agent:   LocalAgent
+
+    deploy: { binary: "extensions/autonomyx-lang" }
+
+    perception: dom               // Theia IDE DOM + Monaco editor
+    actions:    [click, type, filesystem, shell, http, tool_call]
+}
+
+// ── Peers connect worlds (egress-push, identity-authenticated) ─────────────────
+
+@schema("schema:Organization")
+peer eu-edge {
+    url:      "https://eu.autonomyx.ai"
+    protocol: transfer
+    auth:     { type: bearer_env, key: "PEER_EU_KEY" }
+    // Peer is identified by DID, not IP:
+    // trust resolved via node-identity.trust declarations above
+}
