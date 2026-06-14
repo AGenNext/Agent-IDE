@@ -15,6 +15,7 @@ use crate::goals::GoalRegistry;
 use crate::dashboard::DashboardRegistry;
 use crate::computekube::ComputeKube;
 use crate::plugin::PluginRegistry;
+use crate::optin::OptInRegistry;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -136,6 +137,8 @@ pub struct AppState {
     pub dashboards: DashboardRegistry,
     // Plugins — everything extendable; built-in + custom; contribute nodes/sources
     pub plugins: PluginRegistry,
+    // Opt-in — voluntary governed flows: extend (add capability) or align (7-value check)
+    pub optin: OptInRegistry,
 }
 
 impl AppState {
@@ -174,6 +177,7 @@ impl AppState {
             goals:       GoalRegistry::new(),
             dashboards:  DashboardRegistry::new(),
             plugins:     PluginRegistry::new(),
+            optin:       OptInRegistry::new(),
         }
     }
 

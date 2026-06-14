@@ -23,3 +23,4 @@ pub mod goals;
 pub mod dashboard;
 pub mod plugin;
 pub mod search;
+pub mod optin;

@@ -40,6 +40,8 @@ mod dashboard;
 mod plugin;
 mod search;
 mod loop_coordinator;
+mod optin;
+mod optin_middleware;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -183,6 +185,8 @@ async fn main() {
         .nest("/api", routes::plugin::router(state.clone()))
         // Universal open search — one query across the full world model
         .nest("/api", routes::search::router(state.clone()))
+        // Opt-in — extend the platform or align intent with 7 values
+        .nest("/api", routes::optin::router(state.clone()))
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
@@ -201,6 +205,7 @@ async fn main() {
             }
         }))                                                        // 3. rate: per-IP token bucket
         .layer(middleware::from_fn(hardening::request_guard))     // 2. guard: path + size check
+        .layer(middleware::from_fn(optin_middleware::optin_gap_filler)) // 0. gap: unknown routes → optin
         .layer(middleware::from_fn(hardening::security_headers))  // 1. headers: HSTS, CSP, X-Frame
         .layer(DefaultBodyLimit::max(body_limit_bytes))           //    body: 4MB hard cap
         .layer(TimeoutLayer::new(Duration::from_secs(request_timeout_secs))) // timeout: 30s
