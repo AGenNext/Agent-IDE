@@ -16,6 +16,7 @@ mod agent;
 mod transfer;
 mod routes;
 mod cli;
+mod cloud;
 
 use axum::{middleware, Router};
 use cli::Cli;
@@ -77,6 +78,7 @@ async fn main() {
         .nest("/api",      routes::usage::router(state.clone()))
         .nest("/transfer", transfer::router(state.clone()))
         .nest("/ws",       routes::ws::router(state.clone()))
+        .nest("/api",      routes::platform::router())
         // Egress policy: enforce push-only on /transfer
         .layer(middleware::from_fn(gateway::egress_policy))
         // Ingress gate: Bearer auth on all routes (except /health)

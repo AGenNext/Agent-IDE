@@ -9,3 +9,4 @@ pub mod lifecycle;
 pub mod fabric;
 pub mod support;
 pub mod usage;
+pub mod platform;

@@ -1,0 +1,55 @@
+# ── Autonomyx Platform — Single Binary Build ──────────────────────────────────
+#
+# Stage 1: Compile the Autonomyx platform runtime into a static musl binary.
+#          Native everywhere — metal, edge, k3s, cloud k8s, embedded.
+#          One binary. No runtime dependencies. No JVM. No Node. Just Rust.
+#
+# Stage 2: Distroless scratch-equivalent image.
+#          The container IS the platform. Nothing else.
+#
+# Build:  docker build -f Containerfile.runner -t autonomyx:latest .
+# Size:   ~20MB image. Full platform. Gates, fabric, federation, BOM, AIP.
+#
+# openautonomyx.com
+
+# ── Stage 1: Build ────────────────────────────────────────────────────────────
+FROM rust:1-slim-bookworm AS builder
+
+# musl for fully static binary — runs on any Linux, scratch container, or bare metal
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends musl-tools pkg-config libssl-dev && \
+    rustup target add x86_64-unknown-linux-musl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Layer cache: dependencies compile before source (avoid full rebuild on src change)
+COPY packages/agent-runner/Cargo.toml packages/agent-runner/Cargo.lock* ./
+RUN mkdir src && echo 'fn main(){}' > src/main.rs && \
+    cargo build --release --target x86_64-unknown-linux-musl 2>/dev/null || true && \
+    rm -rf src
+
+# Full source build
+COPY packages/agent-runner/src ./src
+RUN touch src/main.rs && \
+    cargo build --release --target x86_64-unknown-linux-musl
+
+# Strip the binary — every byte saved is carried on every device, every edge node
+RUN strip target/x86_64-unknown-linux-musl/release/autonomyx-runner
+
+# ── Stage 2: Platform image — nothing but the binary ─────────────────────────
+FROM gcr.io/distroless/static-debian12:nonroot
+
+LABEL org.opencontainers.image.title       = "Autonomyx Platform"
+LABEL org.opencontainers.image.description = "The platform where anyone can build their next. openautonomyx.com"
+LABEL org.opencontainers.image.vendor      = "Autonomyx"
+LABEL org.opencontainers.image.licenses    = "Apache-2.0"
+LABEL org.opencontainers.image.source      = "https://github.com/agennext/agent-ide"
+
+# The platform. One binary. All gates. All fabric. All federation.
+COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/autonomyx-runner /autonomyx
+
+# 3001 = Platform API (health, agents, runs, gates, fabric, federation, usage, AIP)
+EXPOSE 3001
+
+ENTRYPOINT ["/autonomyx"]

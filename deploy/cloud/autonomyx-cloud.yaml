@@ -1,0 +1,317 @@
+# Autonomyx Platform — Cloud-Agnostic Kubernetes Manifest
+#
+# Cloud as platform provider: the cloud provides compute.
+# Autonomyx provides the platform layer.
+# The binary is identical on AWS EKS, GCP GKE, Azure AKS, Hetzner k3s.
+# No cloud lock-in. No vendor dependency. Portable DID. Portable agents.
+#
+# Deploy to any cloud:
+#   kubectl apply -f autonomyx-cloud.yaml
+#
+# Customize per-cloud by overriding:
+#   CLOUD_PROVIDER: aws | gcp | azure | hetzner | k3s | metal
+#   CLOUD_REGION:   us-east-1 | us-central1 | eastus | fsn1 | ...
+#
+# The platform does not care which cloud. The agent cares only about its DID.
+# openautonomyx.com
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autonomyx
+  labels:
+    app.kubernetes.io/name:       autonomyx
+    app.kubernetes.io/managed-by: autonomyx
+    # Cloud mesh injection — enable for Istio (optional)
+    # istio-injection: enabled
+
+---
+# ── ConfigMap — cloud-agnostic runtime config ─────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autonomyx-config
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+data:
+  PORT:              "3001"
+  RUST_LOG:          "agent_runner=info,tower_http=info"
+  OTEL_SERVICE_NAME: "autonomyx-runner"
+  # Override CLOUD_PROVIDER if auto-detection is insufficient
+  # CLOUD_PROVIDER: "aws"    # aws | gcp | azure | hetzner | k3s | metal
+  AGENT_JOB_NAMESPACE: "autonomyx"
+
+---
+# ── Secret — provider keys (supply your own values) ──────────────────────────
+# kubectl create secret generic autonomyx-secrets -n autonomyx \
+#   --from-literal=LLM_API_KEY=sk-... \
+#   --from-literal=ANTHROPIC_API_KEY=sk-ant-... \
+#   --from-literal=GATEWAY_API_KEY=$(openssl rand -hex 32)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: autonomyx-secrets
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+type: Opaque
+# Keys are empty — inject from your secret manager (AWS Secrets Manager, GCP Secret Manager,
+# Azure Key Vault, HashiCorp Vault, k8s ExternalSecrets Operator)
+data: {}
+
+---
+# ── ServiceAccount — minimal RBAC for Job creation only ──────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+  # Cloud-specific IRSA / Workload Identity annotations:
+  # AWS EKS:  annotations: eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/autonomyx
+  # GCP GKE:  annotations: iam.gke.io/gcp-service-account: autonomyx@PROJECT.iam.gserviceaccount.com
+  # Azure AKS: annotations: azure.workload.identity/client-id: <CLIENT_ID>
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autonomyx-job-runner
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+rules:
+  # Kubernetes IS the agent runner. Only Job permissions — nothing more.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs:     ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs:     ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autonomyx-job-runner
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+subjects:
+  - kind:      ServiceAccount
+    name:      autonomyx-runner
+    namespace: autonomyx
+roleRef:
+  kind:     Role
+  name:     autonomyx-job-runner
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ── Deployment — the platform ─────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name:      autonomyx
+    app.kubernetes.io/component: runner
+  annotations:
+    autonomyx/version: "0.1.0"
+    autonomyx/philosophy: "platform makes things real"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autonomyx-runner
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0    # Zero downtime — gates must always be open
+      maxSurge:       1
+  template:
+    metadata:
+      labels:
+        app:                         autonomyx-runner
+        app.kubernetes.io/name:      autonomyx
+        app.kubernetes.io/component: runner
+    spec:
+      serviceAccountName: autonomyx-runner
+      automountServiceAccountToken: true
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser:    65532   # distroless nonroot uid
+        runAsGroup:   65532
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: autonomyx
+          # Single binary image — the entire platform in one container
+          # Build: docker build -f Containerfile.runner -t autonomyx:latest .
+          image: "ghcr.io/agennext/autonomyx:latest"
+          imagePullPolicy: Always
+
+          ports:
+            - name: api
+              containerPort: 3001
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: autonomyx-config
+
+          env:
+            # Cloud provider context — downward API
+            - name:  NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            - name:  POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - name:  POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            # Provider secrets — from secret manager, not baked in
+            - name:  LLM_API_KEY
+              valueFrom: { secretKeyRef: { name: autonomyx-secrets, key: LLM_API_KEY, optional: true } }
+            - name:  ANTHROPIC_API_KEY
+              valueFrom: { secretKeyRef: { name: autonomyx-secrets, key: ANTHROPIC_API_KEY, optional: true } }
+            - name:  GATEWAY_API_KEY
+              valueFrom: { secretKeyRef: { name: autonomyx-secrets, key: GATEWAY_API_KEY, optional: true } }
+
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "2"
+              memory: "2Gi"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem:   true
+            capabilities:
+              drop: ["ALL"]
+
+          livenessProbe:
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 5
+            periodSeconds:       15
+            failureThreshold:    3
+
+          readinessProbe:
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 2
+            periodSeconds:       5
+            failureThreshold:    2
+
+      terminationGracePeriodSeconds: 30
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+spec:
+  selector:
+    app: autonomyx-runner
+  ports:
+    - name:       api
+      port:       3001
+      targetPort: api
+      protocol:   TCP
+  type: ClusterIP
+
+---
+# ── HorizontalPodAutoscaler — scale with demand ───────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       autonomyx-runner
+  minReplicas: 1
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type:               Utilization
+          averageUtilization: 80
+
+---
+# ── PodDisruptionBudget — always available ────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: autonomyx-runner
+
+---
+# ── Ingress — cloud-agnostic (works with nginx, traefik, istio gateway) ───────
+# Choose your ingress class per cloud:
+#   AWS EKS:   alb.ingress.kubernetes.io/scheme: internet-facing
+#   GCP GKE:   kubernetes.io/ingress.class: "gce"
+#   Azure AKS: kubernetes.io/ingress.class: "azure/application-gateway"
+#   Hetzner:   nginx
+#   k3s:       traefik
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: autonomyx-runner
+  namespace: autonomyx
+  labels:
+    app.kubernetes.io/name: autonomyx
+  annotations:
+    # TLS — cert-manager handles certificate provisioning on all clouds
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Nginx (default — override per cloud)
+    nginx.ingress.kubernetes.io/proxy-read-timeout:  "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout:  "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size:     "50m"
+    # WebSocket support for AIP events
+    nginx.ingress.kubernetes.io/proxy-http-version:  "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+spec:
+  ingressClassName: nginx    # override: alb | gce | azure/application-gateway | traefik
+  tls:
+    - hosts:       ["api.openautonomyx.com"]
+      secretName:  autonomyx-tls
+  rules:
+    - host: api.openautonomyx.com
+      http:
+        paths:
+          - path:     /
+            pathType: Prefix
+            backend:
+              service:
+                name: autonomyx-runner
+                port: { name: api }
