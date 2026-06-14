@@ -1,0 +1,396 @@
+// Autonomyx Provider Marketplace
+// Hierarchy: Marketplace → Provider → Operator → Profile
+// Every key comes from env vars. No secrets in source.
+
+marketplace autonomyx-platform {
+
+    // ── LLM Providers ──────────────────────────────────────────────────────
+
+    @schema("schema:Organization")
+    provider openai {
+        category:    llm
+        description: "OpenAI — GPT-4o, o1, embeddings"
+
+        // Operator 1: direct OpenAI API
+        operator openai-direct {
+            base_url:    "https://api.openai.com"
+            api_key_env: "OPENAI_API_KEY"
+
+            profile gpt4o {
+                model:              "gpt-4o"
+                context:            128000
+                rpm:                500
+                tier:               paid
+                cost_per_1m_input:  5.00
+                cost_per_1m_output: 15.00
+                default:            true
+            }
+            profile gpt4o-mini {
+                model:              "gpt-4o-mini"
+                context:            128000
+                rpm:                500
+                tier:               paid
+                cost_per_1m_input:  0.15
+                cost_per_1m_output: 0.60
+            }
+            profile o1 {
+                model:              "o1"
+                context:            200000
+                rpm:                60
+                tier:               paid
+                cost_per_1m_input:  15.00
+                cost_per_1m_output: 60.00
+                tags:               ["reasoning", "slow", "expensive"]
+            }
+        }
+
+        // Operator 2: Azure OpenAI (same provider, different operator)
+        operator azure-openai {
+            base_url:    "$AZURE_OPENAI_ENDPOINT"
+            api_key_env: "AZURE_OPENAI_KEY"
+            auth: { type: api_key_env, key_env: "AZURE_OPENAI_KEY" }
+
+            profile gpt4o-eu {
+                model:      "gpt-4o"
+                deployment: "$AZURE_GPT4O_DEPLOYMENT"
+                region:     "eu-west"
+                tier:       enterprise
+            }
+            profile gpt4o-us {
+                model:      "gpt-4o"
+                deployment: "$AZURE_GPT4O_US_DEPLOYMENT"
+                region:     "us-east"
+                tier:       enterprise
+            }
+        }
+    }
+
+    @schema("schema:Organization")
+    provider anthropic {
+        category:    llm
+        description: "Anthropic — Claude Opus, Sonnet, Haiku"
+
+        operator anthropic-direct {
+            base_url:    "https://api.anthropic.com"
+            api_key_env: "ANTHROPIC_API_KEY"
+
+            profile opus {
+                model:              "claude-opus-4-8"
+                context:            1000000
+                rpm:                60
+                tier:               paid
+                cost_per_1m_input:  5.00
+                cost_per_1m_output: 25.00
+                tags:               ["best-quality", "expensive"]
+                default:            true
+            }
+            profile sonnet {
+                model:              "claude-sonnet-4-6"
+                context:            1000000
+                rpm:                200
+                tier:               paid
+                cost_per_1m_input:  3.00
+                cost_per_1m_output: 15.00
+            }
+            profile haiku {
+                model:              "claude-haiku-4-5"
+                context:            200000
+                rpm:                1000
+                tier:               paid
+                cost_per_1m_input:  1.00
+                cost_per_1m_output: 5.00
+                tags:               ["fast", "cheap"]
+            }
+        }
+
+        // AWS Bedrock operator — same Anthropic models via Bedrock
+        operator bedrock-anthropic {
+            base_url:    "$BEDROCK_ENDPOINT"
+            region:      "$AWS_REGION"
+            auth: { type: aws_iam }
+
+            profile opus-bedrock {
+                model:   "anthropic.claude-opus-4-8-v1"
+                context: 1000000
+                tier:    enterprise
+                region:  "$AWS_REGION"
+            }
+        }
+    }
+
+    @schema("schema:Organization")
+    provider ollama {
+        category:    llm
+        description: "Ollama — self-hosted open models, zero external cost"
+
+        // Local dev operator
+        operator local {
+            base_url: "$OLLAMA_BASE_URL"
+            auth:     { type: none }
+
+            profile llama3 {
+                model:   "llama3"
+                context: 8192
+                tier:    free
+                default: true
+                tags:    ["local", "fast", "no-cost"]
+            }
+            profile codellama {
+                model:   "codellama:34b"
+                context: 16384
+                tier:    free
+                tags:    ["code", "local"]
+            }
+            profile phi3 {
+                model:   "phi3"
+                context: 128000
+                tier:    free
+                tags:    ["small", "fast", "local"]
+            }
+            profile mistral {
+                model:   "mistral"
+                context: 32768
+                tier:    free
+            }
+        }
+
+        // Remote self-hosted Ollama cluster
+        operator remote-cluster {
+            base_url:    "$REMOTE_OLLAMA_URL"
+            api_key_env: "REMOTE_OLLAMA_KEY"
+
+            profile llama3-70b {
+                model:   "llama3:70b"
+                context: 8192
+                tier:    paid
+                tags:    ["powerful", "self-hosted"]
+            }
+        }
+    }
+
+    @schema("schema:Organization")
+    provider groq {
+        category:    llm
+        description: "Groq — ultra-fast inference on LPUs"
+
+        operator groq-direct {
+            base_url:    "https://api.groq.com"
+            api_key_env: "GROQ_API_KEY"
+
+            profile llama3-70b {
+                model:              "llama3-70b-8192"
+                context:            8192
+                rpm:                30
+                tier:               paid
+                cost_per_1m_input:  0.59
+                cost_per_1m_output: 0.79
+                tags:               ["ultra-fast", "lpu"]
+                default:            true
+            }
+            profile mixtral {
+                model:              "mixtral-8x7b-32768"
+                context:            32768
+                rpm:                30
+                tier:               paid
+                cost_per_1m_input:  0.24
+                cost_per_1m_output: 0.24
+            }
+        }
+    }
+
+    @schema("schema:Organization")
+    provider mistral {
+        category: llm
+
+        operator mistral-direct {
+            base_url:    "https://api.mistral.ai"
+            api_key_env: "MISTRAL_API_KEY"
+
+            profile large {
+                model:   "mistral-large-latest"
+                context: 128000
+                tier:    paid
+                default: true
+            }
+            profile nemo {
+                model:   "open-mistral-nemo"
+                context: 128000
+                tier:    free
+                tags:    ["open", "free"]
+            }
+        }
+    }
+
+    // ── Infra Providers ────────────────────────────────────────────────────
+
+    @schema("schema:Organization")
+    provider kubernetes {
+        category:    infra
+        description: "CNCF Kubernetes — any conformant cluster"
+
+        operator prod-cluster {
+            api_key_env: "KUBECONFIG_B64"
+            auth: { type: bearer_env, key_env: "K8S_SA_TOKEN" }
+
+            profile standard {
+                cpu:    "2"
+                memory: "4Gi"
+                size:   "standard-2-4"
+                tier:   paid
+                default: true
+            }
+            profile gpu {
+                cpu:    "8"
+                memory: "32Gi"
+                gpu:    "nvidia-a100"
+                size:   "gpu-8-32-a100"
+                tier:   enterprise
+                tags:   ["gpu", "ml-training"]
+            }
+        }
+
+        operator dev-cluster {
+            base_url: "https://localhost:6443"
+            auth: { type: mtls, cert_path: "$HOME/.kube/certs" }
+
+            profile micro {
+                cpu:    "0.5"
+                memory: "512Mi"
+                tier:   free
+                default: true
+                tags:   ["dev", "local"]
+            }
+        }
+    }
+
+    @schema("schema:Organization")
+    provider oci {
+        category: infra
+        description: "Oracle Cloud Infrastructure"
+
+        operator oci-prod {
+            region:      "$OCI_REGION"
+            account_id:  "$OCI_TENANCY_ID"
+            auth: { type: bearer_env, key_env: "OCI_API_KEY" }
+
+            profile flex-2 {
+                cpu:    "2"
+                memory: "12Gi"
+                size:   "VM.Standard.E4.Flex"
+                tier:   paid
+                default: true
+            }
+            profile flex-16 {
+                cpu:    "16"
+                memory: "96Gi"
+                size:   "VM.Standard.E4.Flex"
+                tier:   paid
+                tags:   ["large", "production"]
+            }
+            profile ampere-4 {
+                cpu:    "4"
+                memory: "24Gi"
+                size:   "VM.Standard.A1.Flex"
+                tier:   paid
+                tags:   ["arm", "cheap"]
+            }
+        }
+    }
+
+    @schema("schema:Organization")
+    provider cloudstack {
+        category:    infra
+        description: "Apache CloudStack — open source, self-hosted cloud"
+
+        operator cs-onprem {
+            base_url:    "$CLOUDSTACK_API_URL"
+            api_key_env: "CLOUDSTACK_API_KEY"
+            auth: { type: api_key_env, key_env: "CLOUDSTACK_API_KEY", secret_env: "CLOUDSTACK_SECRET_KEY" }
+
+            profile small {
+                cpu:    "2"
+                memory: "4Gi"
+                size:   "Small"
+                tier:   paid
+                default: true
+            }
+            profile medium {
+                cpu:    "4"
+                memory: "8Gi"
+                size:   "Medium"
+                tier:   paid
+            }
+            profile large {
+                cpu:    "8"
+                memory: "16Gi"
+                size:   "Large"
+                tier:   paid
+                tags:   ["high-memory"]
+            }
+        }
+    }
+
+    @schema("schema:Organization")
+    provider hetzner {
+        category:    infra
+        description: "Hetzner Cloud — best price/performance ratio in EU"
+
+        operator hetzner-eu {
+            base_url:    "https://api.hetzner.cloud/v1"
+            api_key_env: "HETZNER_API_KEY"
+
+            profile cx22 {
+                cpu:    "2"
+                memory: "4Gi"
+                size:   "cx22"
+                region: "eu-central"
+                tier:   paid
+                cost_per_1m_input: 0.005   // EUR/hour repurposed as hourly cost
+                default: true
+            }
+            profile cx42 {
+                cpu:    "8"
+                memory: "16Gi"
+                size:   "cx42"
+                region: "eu-central"
+                tier:   paid
+            }
+        }
+    }
+
+    // ── Tool Providers ─────────────────────────────────────────────────────
+
+    @schema("schema:Organization")
+    provider github {
+        category:    tool
+        description: "GitHub API — repos, issues, PRs, Actions"
+
+        operator github-cloud {
+            base_url:    "https://api.github.com"
+            api_key_env: "GITHUB_TOKEN"
+
+            profile read {
+                scopes:  ["repo:read", "metadata:read"]
+                version: "2022-11-28"
+                tier:    free
+                default: true
+            }
+            profile write {
+                scopes:  ["repo", "issues", "pull_requests", "actions"]
+                version: "2022-11-28"
+                tier:    paid
+            }
+        }
+
+        operator github-enterprise {
+            base_url:    "$GHE_URL"
+            api_key_env: "GHE_TOKEN"
+
+            profile admin {
+                scopes:  ["repo", "admin:org", "admin:enterprise"]
+                version: "2022-11-28"
+                tier:    enterprise
+            }
+        }
+    }
+}
