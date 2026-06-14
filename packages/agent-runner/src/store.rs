@@ -8,6 +8,8 @@ use crate::fabric::Fabric;
 use crate::federation::FederationRegistry;
 use crate::usage::UsageMeter;
 use crate::onboarding::OnboardingRegistry;
+use crate::blockchain::BlockchainBridge;
+use crate::storage::StorageRegistry;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -115,6 +117,10 @@ pub struct AppState {
     pub usage: UsageMeter,
     // Onboarding — chat-based configuration; the chat IS the platform interface
     pub onboarding: OnboardingRegistry,
+    // Blockchain bridge — on-chain DID, accountability, usage settlement, agent NFTs
+    pub blockchain: Arc<BlockchainBridge>,
+    // Distributed storage — policy-driven, milestone-bound, fine-grained ACL
+    pub storage: StorageRegistry,
 }
 
 impl AppState {
@@ -146,6 +152,8 @@ impl AppState {
             federation:  FederationRegistry::new(),
             usage:       UsageMeter::new(),
             onboarding:  OnboardingRegistry::new(),
+            blockchain:  BlockchainBridge::new(),
+            storage:     StorageRegistry::new(),
         }
     }
 

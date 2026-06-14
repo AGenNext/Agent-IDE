@@ -30,6 +30,9 @@ mod mcp;
 mod hardening;
 mod contract;
 mod controller;
+mod blockchain;
+mod compute;
+mod storage;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -157,6 +160,10 @@ async fn main() {
         .nest("/", routes::mcp::router(state.clone()))
         // AIP — Agent Internet Protocol (agent-to-agent, DID + Ed25519)
         .nest("/api", routes::aip::router(state.clone()))
+        // Blockchain — on-chain DID, accountability, usage settlement, agent NFTs
+        .nest("/api", routes::blockchain::router(state.clone()))
+        // Storage — distributed, policy-driven, milestone-bound, project lifecycle
+        .nest("/api", routes::storage::router(state.clone()))
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
