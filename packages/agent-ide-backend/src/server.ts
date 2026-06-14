@@ -642,6 +642,33 @@ app.get('/api/orchestrate/:id', (req: Request, res: Response) => {
     res.json(run);
 });
 
+// ─── Headless render ─────────────────────────────────────────────────────────
+// GET /api/runs/:id/render → PNG trace diagram (headless Fabric.js canvas)
+// GET /api/peers/render    → PNG mesh topology diagram
+
+app.get('/api/runs/:id/render', async (req: Request, res: Response) => {
+    const run = runStore.get(req.params['id'] ?? '');
+    if (!run) { res.status(404).json({ error: 'Run not found' }); return; }
+    try {
+        const { renderRunTrace } = await import('./headless-renderer');
+        const png = await renderRunTrace(run as any);
+        res.set('Content-Type', 'image/png').send(png);
+    } catch (e: any) {
+        res.status(501).json({ error: e?.message ?? 'Headless renderer not available' });
+    }
+});
+
+app.get('/api/peers/render', async (_req: Request, res: Response) => {
+    const peers = Array.from(peerStore.values());
+    try {
+        const { renderMesh } = await import('./headless-renderer');
+        const png = await renderMesh(peers);
+        res.set('Content-Type', 'image/png').send(png);
+    } catch (e: any) {
+        res.status(501).json({ error: e?.message ?? 'Headless renderer not available' });
+    }
+});
+
 // ─── Peers ────────────────────────────────────────────────────────────────────
 // In-memory peer store (survives only until restart; persistence is left to the data volume)
 

@@ -4,8 +4,11 @@ mod tools;
 mod agent;
 mod transfer;
 mod routes;
+mod cli;
 
 use axum::{middleware, Router};
+use cli::{Cli, Commands};
+use clap::Parser;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -15,6 +18,13 @@ pub use store::AppState;
 
 #[tokio::main]
 async fn main() {
+    // Headless CLI mode — if subcommand given, run and exit
+    let cli_args = Cli::parse();
+    if cli_args.command.is_some() {
+        cli::run_cli(cli_args).await.expect("CLI error");
+        return;
+    }
+
     fmt()
         .with_env_filter(EnvFilter::from_default_env()
             .add_directive("agent_runner=debug".parse().unwrap())

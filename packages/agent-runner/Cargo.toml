@@ -33,6 +33,8 @@ futures     = "0.3"
 tokio-stream = "0.1"
 async-stream  = "0.3"
 urlencoding   = "2"
+clap          = { version = "4", features = ["derive"] }
+anyhow        = "1"
 
 # Tracing
 tracing            = "0.1"
