@@ -1,0 +1,144 @@
+// Autonomyx Metal Box — single hardened bare-metal host delivering to N Kubernetes clusters.
+//
+// The metal box is:
+//   - Air-gapped ingress (no inbound, only egress to k8s API servers)
+//   - Runs: autonomyx-runner (Rust) + ArgoCD agent + Flux CD + Helm controller
+//   - Identity: Ed25519 keypair backed by HSM
+//   - Delivers to multiple k8s clusters via kubeconfig secrets
+//   - Network contract: mTLS to every k8s API server, signed by metal-box identity
+//   - GitOps: metal box watches git, deploys to clusters — clusters never pull from internet
+
+@schema("schema:DataCenter")
+infra metal-box {
+    provider: bare_metal
+    runtime:  autonomyx_runner
+
+    // Hardened: no inbound ports, only egress
+    resource cpu     metal-cpu     { size: "16",   count: 1 }
+    resource memory  metal-mem     { size: "64Gi", count: 1 }
+    resource storage metal-storage { size: "2Ti" }
+    resource gpu     metal-gpu     { size: "none" }
+}
+
+@schema("schema:Person")
+identity metal-identity {
+    key_type:  ed25519
+    storage:   hsm           // Hardware Security Module — keys never leave the HSM
+    rotate: { interval: 90d }
+
+    // Metal box has operator-level credentials over all clusters it manages
+    credential k8s-operator {
+        type:  operator_access
+        scope: ["k8s:*/deployments", "k8s:*/configmaps", "k8s:*/secrets"]
+        ttl:   1h            // JIT — re-issued every hour
+    }
+}
+
+// ── Kubernetes cluster delivery targets ────────────────────────────────────────
+
+@schema("schema:DataCenter")
+infra k8s-eu-prod {
+    provider: kubernetes
+    region:   "eu-west-1"
+    domain:   "eu.autonomyx.ai"
+    tls:      true
+    runtime:  autonomyx_rust
+    image:    "ghcr.io/agennext/agent-ide:main"
+}
+
+@schema("schema:DataCenter")
+infra k8s-us-prod {
+    provider: kubernetes
+    region:   "us-east-1"
+    domain:   "us.autonomyx.ai"
+    tls:      true
+    runtime:  autonomyx_rust
+    image:    "ghcr.io/agennext/agent-ide:main"
+}
+
+@schema("schema:DataCenter")
+infra k8s-ap-prod {
+    provider: kubernetes
+    region:   "ap-southeast-1"
+    domain:   "ap.autonomyx.ai"
+    tls:      true
+    runtime:  autonomyx_rust
+    image:    "ghcr.io/agennext/agent-ide:main"
+}
+
+@schema("schema:DataCenter")
+infra k8s-onprem {
+    provider: kubernetes
+    region:   "on-prem"
+    domain:   "internal.autonomyx.ai"
+    tls:      true
+    runtime:  autonomyx_rust
+    image:    "registry.internal/agent-ide:main"    // air-gapped registry
+}
+
+// ── Metal delivers to all clusters via contract ────────────────────────────────
+
+contract metal-delivery {
+    enforce: network
+    mtls:    required         // metal box ↔ k8s API server: mTLS enforced
+
+    traffic {
+        strategy: failover    // sequential — primary first, then fallover
+        primary:  "k8s-eu-prod/default"  weight: 100
+        fallback: "k8s-us-prod/default"  weight: 0   // only on EU failure
+    }
+
+    circuit_breaker {
+        threshold:    50      // 50% delivery failures → stop and alert
+        sleep_window: 60s
+        min_requests: 5
+    }
+
+    retry { attempts: 3, backoff: exponential, on: [connect-failure, 5xx] }
+
+    observability {
+        traces:   true
+        metrics:  true
+        sampling: 1.0
+    }
+}
+
+// ── Delivery pipeline (GitOps: metal watches git, pushes to clusters) ──────────
+
+pipeline metal-gitops {
+    trigger: push
+
+    stage lint {
+        runs_on: "metal-box"
+        run:     "ayx lint examples/autonomyx-platform.ayx"
+        run:     "helm lint deploy/helm/autonomyx"
+    }
+
+    stage deliver-eu {
+        runs_on: "metal-box"
+        needs:   ["lint"]
+        run:     "kubectl --context k8s-eu apply -f deploy/argocd/autonomyx-app.yaml"
+        run:     "argocd app sync autonomyx --context k8s-eu --prune"
+    }
+
+    stage deliver-us {
+        runs_on: "metal-box"
+        needs:   ["deliver-eu"]
+        run:     "kubectl --context k8s-us apply -f deploy/argocd/autonomyx-app.yaml"
+        run:     "argocd app sync autonomyx --context k8s-us --prune"
+    }
+
+    stage deliver-ap {
+        runs_on: "metal-box"
+        needs:   ["deliver-eu"]
+        run:     "kubectl --context k8s-ap apply -f deploy/argocd/autonomyx-app.yaml"
+        run:     "argocd app sync autonomyx --context k8s-ap --prune"
+    }
+
+    stage deliver-onprem {
+        runs_on: "metal-box"
+        needs:   ["lint"]
+        run:     "kubectl --context k8s-onprem apply -f deploy/argocd/autonomyx-app.yaml"
+        run:     "argocd app sync autonomyx --context k8s-onprem --prune"
+    }
+}

@@ -4,7 +4,8 @@
 
 # ── Image ─────────────────────────────────────────────────────────────────────
 image:
-  repository: ghcr.io/agennext/agent-ide
+  # Self-hosted Zot registry — device is the host, no external registry
+  repository: "${ZOT_REGISTRY_HOST}:5000/agennext/agent-ide"
   tag:        "main"
   pullPolicy: Always
 
