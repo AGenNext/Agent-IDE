@@ -1,0 +1,69 @@
+{{- if .Values.networkPolicy.enabled }}
+# CNCF Kubernetes Network Policy — zero-trust ingress/egress
+# Ingress:  only from ingress controller + within namespace
+# Egress:   DNS (53) + HTTPS (443) to any IP (LLM APIs, tool endpoints)
+#           No other outbound. No inbound from peers (egress-push only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-netpol
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name:     autonomyx
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow from ingress controller namespace (Traefik / Nginx)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-system
+      ports:
+        - port: 3000
+          protocol: TCP
+        - port: 3001
+          protocol: TCP
+    # Allow Prometheus scraping from observability namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - port: 9090
+          protocol: TCP
+    # Allow within namespace (IDE ↔ backend)
+    - from:
+        - podSelector: {}
+  egress:
+    # DNS — required for service discovery and LLM endpoint resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # HTTPS — LLM providers (Anthropic, OpenAI, Ollama, any endpoint)
+    - ports:
+        - port: 443
+          protocol: TCP
+    # HTTP — self-hosted Ollama / local endpoints on non-443 ports
+    - ports:
+        - port: 11434   # Ollama default
+          protocol: TCP
+        - port: 8000    # vLLM default
+          protocol: TCP
+        - port: 8080    # generic model server
+          protocol: TCP
+    # OTel collector (CNCF OpenTelemetry)
+    - ports:
+        - port: 4317    # OTLP gRPC
+          protocol: TCP
+        - port: 4318    # OTLP HTTP
+          protocol: TCP
+    # Within namespace (pods talking to each other)
+    - to:
+        - podSelector: {}
+{{- end }}

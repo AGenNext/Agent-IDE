@@ -1,0 +1,75 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name":      "Autonomyx",
+  "scopeName": "source.autonomyx",
+  "fileTypes": ["ayx"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#schema-annotations" },
+    { "include": "#keywords" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#booleans" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name":  "comment.line.double-slash.autonomyx",
+          "match": "//.*$"
+        },
+        {
+          "name":  "comment.block.autonomyx",
+          "begin": "/\\*",
+          "end":   "\\*/"
+        }
+      ]
+    },
+    "schema-annotations": {
+      "name":  "entity.name.tag.schema.autonomyx",
+      "match": "@(schema|type|context)\\b"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name":  "keyword.control.autonomyx",
+          "match": "\\b(agent|workflow|tool|peer|infra|pipeline|stage|step|resource|extends)\\b"
+        },
+        {
+          "name":  "keyword.other.field.autonomyx",
+          "match": "\\b(model|provider|api_key|base_url|tools|memory|reasoning|perception|peers|tags|input|output|impl|url|auth|description|region|domain|tls|runtime|image|trigger|needs|run|on_error|when|parallel|agent|strategy|storage|window|encoder|som|depth_maps|screenshot|modality|max_iter|decompose|reflection|anticipate|count|size|index|ttl|embeddings|type|key|bindings|outputVar|condition|commands|runsOn|steps)\\b"
+        },
+        {
+          "name":  "support.type.builtin.autonomyx",
+          "match": "\\b(anthropic|openai|ollama|vllm|groq|mistral|together|custom|react|chain_of_thought|tree_of_thought|dppm|rewoo|reflexion|episodic|semantic|procedural|working|rag|sql|text|multimodal|vision|a11y_tree|html|tool_augmented|http|shell|python|wasm|native|mcp|bearer|api_key|basic|none|transfer|grpc|ws|oci|cloudstack|aws|gcp|azure|hetzner|fly|kubernetes|docker|bare_metal|autonomyx_runner|node|k8s|push|pr|schedule|manual|retry|fail|skip|escalate|in_memory|redis|postgres|sqlite|vector|cpu|gpu|network|storage|memory)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "name":  "string.quoted.double.autonomyx",
+      "begin": "\"",
+      "end":   "\"",
+      "patterns": [
+        { "name": "constant.character.escape.autonomyx", "match": "\\\\." }
+      ]
+    },
+    "numbers": {
+      "name":  "constant.numeric.autonomyx",
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+    },
+    "booleans": {
+      "name":  "constant.language.boolean.autonomyx",
+      "match": "\\b(true|false)\\b"
+    },
+    "operators": {
+      "name":  "keyword.operator.autonomyx",
+      "match": "(→|->|:)"
+    },
+    "identifiers": {
+      "name":  "variable.other.autonomyx",
+      "match": "\\b[_a-zA-Z][\\w-]*\\b"
+    }
+  }
+}

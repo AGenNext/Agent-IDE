@@ -1,0 +1,90 @@
+# Autonomyx Helm Chart — CNCF-mature stack
+# All dependencies are CNCF graduated or incubating projects.
+# No vendor lock-in; every component is replaceable.
+
+# ── Image ─────────────────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/agennext/agent-ide
+  tag:        "main"
+  pullPolicy: Always
+
+# ── Runtime phase (1=Node, 2=Rust autonomyx-runner) ───────────────────────────
+runtimePhase: "2"
+
+# ── Replicas ──────────────────────────────────────────────────────────────────
+replicaCount: 1
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu:    "250m"
+    memory: "512Mi"
+  limits:
+    cpu:    "2"
+    memory: "2Gi"
+
+# ── Ingress (CNCF: Traefik or Nginx Ingress Controller) ───────────────────────
+ingress:
+  enabled:   true
+  className: "traefik"            # swap to "nginx" for Nginx Ingress Controller
+  host:      "ide.autonomyx.ai"
+  tls:
+    enabled:      true
+    secretName:   "autonomyx-tls"
+    certManager:
+      enabled:    true
+      issuerRef:
+        name: "letsencrypt-prod"
+        kind: "ClusterIssuer"
+
+# ── Persistence (CNCF: any CSI driver) ────────────────────────────────────────
+persistence:
+  enabled:      true
+  storageClass: ""          # "" = cluster default CSI driver
+  size:         "10Gi"
+  accessMode:   ReadWriteOnce
+
+# ── Observability (CNCF: OpenTelemetry + Prometheus) ──────────────────────────
+observability:
+  otel:
+    enabled:      true
+    endpoint:     "http://otel-collector.observability:4318"   # OTLP HTTP
+    serviceName:  "autonomyx-runner"
+    sampling:     1.0
+  prometheus:
+    enabled:      true
+    port:         9090
+    path:         "/metrics"
+    scrapeInterval: "15s"
+
+# ── Gateway secrets (from Kubernetes Secrets — not baked in) ──────────────────
+secrets:
+  llmApiKey:      ""   # LLM_API_KEY
+  anthropicApiKey: ""  # ANTHROPIC_API_KEY (if using Anthropic provider)
+  transferApiKey:  ""  # GATEWAY_API_KEY / TRANSFER_API_KEY
+  gatewayApiKey:   ""  # GATEWAY_API_KEY
+
+# ── Service ───────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  idePort:     3000
+  backendPort: 3001
+  metricsPort: 9090
+
+# ── Security context ──────────────────────────────────────────────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser:    1001
+  fsGroup:      1001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem:   false
+  capabilities:
+    drop: ["ALL"]
+
+# ── Network policy ────────────────────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+  # Egress: allow DNS + HTTPS outbound (LLM APIs, tool endpoints)
+  # Ingress: allow from ingress controller namespace only

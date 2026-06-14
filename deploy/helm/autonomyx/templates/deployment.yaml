@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name:       autonomyx
+    app.kubernetes.io/instance:   {{ .Release.Name }}
+    app.kubernetes.io/version:    {{ .Values.image.tag | quote }}
+    app.kubernetes.io/component:  runtime
+    app.kubernetes.io/part-of:    autonomyx-platform
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name:     autonomyx
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge:       1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name:     autonomyx
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        # Prometheus scraping (CNCF Prometheus)
+        {{- if .Values.observability.prometheus.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   {{ .Values.observability.prometheus.port | quote }}
+        prometheus.io/path:   {{ .Values.observability.prometheus.path | quote }}
+        {{- end }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      serviceAccountName: {{ .Release.Name }}
+      containers:
+        - name: autonomyx
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: ide
+              containerPort: 3000
+              protocol:      TCP
+            - name: api
+              containerPort: 3001
+              protocol:      TCP
+            {{- if .Values.observability.prometheus.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.observability.prometheus.port }}
+              protocol:      TCP
+            {{- end }}
+          env:
+            - name:  RUNTIME_PHASE
+              value: {{ .Values.runtimePhase | quote }}
+            # ── Multi-provider LLM config (no lock-in) ──────────────────
+            - name:  LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key:  llm-api-key
+                  optional: true
+            - name:  ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key:  anthropic-api-key
+                  optional: true
+            - name:  OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key:  openai-api-key
+                  optional: true
+            # ── Gateway / ingress auth ────────────────────────────────────
+            - name:  GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key:  gateway-api-key
+                  optional: true
+            # ── Provider URLs (override for self-hosted / Ollama) ─────────
+            - name:  LLM_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key:  llm-base-url
+                  optional: true
+            - name:  OLLAMA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key:  ollama-base-url
+                  optional: true
+            # ── Observability (CNCF OpenTelemetry) ────────────────────────
+            {{- if .Values.observability.otel.enabled }}
+            - name:  OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.otel.endpoint | quote }}
+            - name:  OTEL_SERVICE_NAME
+              value: {{ .Values.observability.otel.serviceName | quote }}
+            - name:  OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.observability.otel.sampling | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: api
+            initialDelaySeconds: 15
+            periodSeconds:       10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds:       5
+          volumeMounts:
+            - name:      workspace
+              mountPath: /workspace/data
+      volumes:
+        - name: workspace
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-workspace
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
