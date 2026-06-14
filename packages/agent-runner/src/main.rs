@@ -28,6 +28,7 @@ mod cloud;
 mod onboarding;
 mod mcp;
 mod hardening;
+mod contract;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -155,6 +156,10 @@ async fn main() {
         .nest("/", routes::mcp::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
+        .layer(middleware::from_fn({
+            let s = state.clone();
+            move |req, next| contract::contract_layer(req, next, s.clone())
+        }))                                                        // 6. contract: oath + governance + fabric
         .layer(middleware::from_fn(gateway::egress_policy))       // 5. egress: push-only /transfer
         .layer(middleware::from_fn(gateway::ingress_gate))        // 4. auth: Bearer token, constant-time
         .layer(middleware::from_fn({
