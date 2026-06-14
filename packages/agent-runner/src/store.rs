@@ -14,6 +14,7 @@ use crate::govgraph::GovernanceGraph;
 use crate::goals::GoalRegistry;
 use crate::dashboard::DashboardRegistry;
 use crate::computekube::ComputeKube;
+use crate::plugin::PluginRegistry;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -133,6 +134,8 @@ pub struct AppState {
     pub goals: GoalRegistry,
     // Dashboards — custom views; 4 built-in + unlimited custom
     pub dashboards: DashboardRegistry,
+    // Plugins — everything extendable; built-in + custom; contribute nodes/sources
+    pub plugins: PluginRegistry,
 }
 
 impl AppState {
@@ -170,6 +173,7 @@ impl AppState {
             computekube: ComputeKube::new(),
             goals:       GoalRegistry::new(),
             dashboards:  DashboardRegistry::new(),
+            plugins:     PluginRegistry::new(),
         }
     }
 

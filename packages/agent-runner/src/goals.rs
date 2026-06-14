@@ -206,6 +206,7 @@ pub struct Goal {
     pub alignment:            Option<AlignmentCheck>,
     pub impact_metrics:       Vec<ImpactMetric>,
     pub objectives:           Vec<String>, // objective IDs
+    pub tags:                 Vec<String>,
     pub requires_consent:     bool,
     pub prefer_reversible:    bool,
     pub net_positive_declared: bool,
@@ -323,6 +324,7 @@ impl GoalRegistry {
             alignment:            None,
             impact_metrics,
             objectives:           vec![],
+            tags:                 vec![],
             requires_consent:     true,    // default: always ask consent
             prefer_reversible:    true,    // default: prefer reversible actions
             net_positive_declared: true,
@@ -463,6 +465,66 @@ impl GoalRegistry {
         self.objectives.read().unwrap().values()
             .filter(|o| o.goal_id == goal_id)
             .cloned().collect()
+    }
+
+    // ── Convenience aliases (used by search + loop_coordinator) ──────────────
+
+    pub fn list(&self) -> Vec<Goal> { self.list_goals(None) }
+
+    pub fn get(&self, id: &str) -> Option<Goal> { self.get_goal(id) }
+
+    /// Mark the first pending objective for a goal as InProgress.
+    pub fn advance_objective(&self, goal_id: &str, obj_id: &str) -> Result<Objective, String> {
+        let mut objectives = self.objectives.write().unwrap();
+        let obj = objectives.get_mut(obj_id)
+            .ok_or_else(|| format!("objective '{}' not found", obj_id))?;
+        if obj.goal_id != goal_id {
+            return Err(format!("objective '{}' does not belong to goal '{}'", obj_id, goal_id));
+        }
+        if obj.status == ObjectiveStatus::Pending {
+            obj.status = ObjectiveStatus::InProgress;
+        }
+        Ok(obj.clone())
+    }
+
+    /// Mark a goal as Achieved (used by loop coordinator when all objectives done).
+    pub fn complete(&self, goal_id: &str) -> Result<Goal, String> {
+        let mut goals = self.goals.write().unwrap();
+        let goal = goals.get_mut(goal_id)
+            .ok_or_else(|| format!("goal '{}' not found", goal_id))?;
+        goal.status       = GoalStatus::Achieved;
+        goal.completed_at = Some(Utc::now());
+        goal.updated_at   = Utc::now();
+        tracing::info!(goal = %goal_id, "goals: completed");
+        Ok(goal.clone())
+    }
+
+    /// Record impact by domain — finds first matching metric or skips if none.
+    pub fn record_impact_by_domain(
+        &self,
+        goal_id: &str,
+        domain: ImpactDomain,
+        increment: i64,
+        _note: &str,
+    ) -> Result<Goal, String> {
+        let mut goals = self.goals.write().unwrap();
+        let goal = goals.get_mut(goal_id)
+            .ok_or_else(|| format!("goal '{}' not found", goal_id))?;
+        for metric in &mut goal.impact_metrics {
+            if metric.domain == domain {
+                let current = metric.actual.unwrap_or(metric.baseline);
+                metric.actual      = Some(current + increment as f64);
+                metric.measured_at = Some(Utc::now());
+                break;
+            }
+        }
+        let all_achieved = goal.impact_metrics.iter().all(|m| m.achieved());
+        if all_achieved && goal.status == GoalStatus::Active {
+            goal.status       = GoalStatus::Achieved;
+            goal.completed_at = Some(Utc::now());
+        }
+        goal.updated_at = Utc::now();
+        Ok(goal.clone())
     }
 
     // ── Summary ──────────────────────────────────────────────────────────────

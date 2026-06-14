@@ -37,6 +37,9 @@ mod govgraph;
 mod computekube;
 mod goals;
 mod dashboard;
+mod plugin;
+mod search;
+mod loop_coordinator;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -176,6 +179,10 @@ async fn main() {
         .nest("/api", routes::goals::router(state.clone()))
         // Dashboards — custom views over the full platform world model
         .nest("/api", routes::dashboard::router(state.clone()))
+        // Plugins — everything extendable; built-in + custom; contribute nodes/sources
+        .nest("/api", routes::plugin::router(state.clone()))
+        // Universal open search — one query across the full world model
+        .nest("/api", routes::search::router(state.clone()))
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
@@ -206,7 +213,36 @@ async fn main() {
     // ── Controller — CRD reconciliation loop ─────────────────────────────────
     // Watches AutonomyxAgent + AutonomyxApplication CRDs and drives gates.
     // End to end: declaration → build → sign → push → deploy → run → observe.
+    // ── Plugin governance nodes — wire enabled plugin nodes into govgraph ────
+    {
+        use crate::govgraph::{GovernanceNode, NodeKind, NodePolicy};
+        for pn in state.plugins.all_nodes() {
+            let kind = match pn.kind.as_str() {
+                "source" => NodeKind::Source,
+                "sink"   => NodeKind::Sink,
+                "api"    => NodeKind::Api,
+                _        => NodeKind::Tool,
+            };
+            let node = GovernanceNode {
+                id:           pn.id.clone(),
+                kind,
+                label:        pn.label.clone(),
+                description:  format!("Plugin node: {}", pn.label),
+                did:          None,
+                capabilities: pn.capabilities.clone(),
+                requires:     vec![pn.capability_required.clone()],
+                trust_score:  0.8,
+                policy:       NodePolicy::default(),
+                metadata:     serde_json::json!({}),
+                created_at:   chrono::Utc::now(),
+                updated_at:   chrono::Utc::now(),
+            };
+            state.govgraph.add_node(node);
+        }
+    }
+
     controller::start(state.clone());
+    loop_coordinator::start(state.clone());
 
     // Log hardened attack surface at boot
     hardening::log_surface();
