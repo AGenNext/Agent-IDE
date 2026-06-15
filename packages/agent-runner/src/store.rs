@@ -16,6 +16,7 @@ use crate::dashboard::DashboardRegistry;
 use crate::computekube::ComputeKube;
 use crate::plugin::PluginRegistry;
 use crate::optin::OptInRegistry;
+use crate::authmatic::AuthMatic;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -139,6 +140,8 @@ pub struct AppState {
     pub plugins: PluginRegistry,
     // Opt-in — voluntary governed flows: extend (add capability) or align (7-value check)
     pub optin: OptInRegistry,
+    // Auth-matic — automatic auth: JIT keys, enrollment tokens, peer credentials
+    pub authmatic: AuthMatic,
 }
 
 impl AppState {
@@ -178,6 +181,7 @@ impl AppState {
             dashboards:  DashboardRegistry::new(),
             plugins:     PluginRegistry::new(),
             optin:       OptInRegistry::new(),
+            authmatic:   AuthMatic::new(),
         }
     }
 

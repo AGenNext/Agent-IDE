@@ -26,3 +26,5 @@ pub mod search;
 pub mod optin;
 pub mod openapi;
 pub mod landing;
+pub mod authmatic;
+pub mod arithmetic;

@@ -43,6 +43,8 @@ mod search;
 mod loop_coordinator;
 mod optin;
 mod optin_middleware;
+mod authmatic;
+mod arithmetic;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -192,6 +194,10 @@ async fn main() {
         .merge(routes::openapi::router())
         // Landing page — GET / serves the full route map as HTML
         .merge(routes::landing::router())
+        // Auth-matic — JIT keys, enrollment, rotation, peer credentials
+        .nest("/api", routes::authmatic::router(state.clone()))
+        // Arithmetic — expression eval, platform stats, named formulas
+        .nest("/api", routes::arithmetic::router(state.clone()))
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
