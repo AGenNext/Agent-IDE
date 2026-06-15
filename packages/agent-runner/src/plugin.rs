@@ -376,6 +376,83 @@ pub fn builtin_plugins() -> Vec<PluginDescriptor> {
             ],
             data_sources: vec!["buildstream_pipeline".into(), "buildstream_cache_stats".into()],
         },
+        PluginDescriptor {
+            id:           "plugin_airavata".into(),
+            name:         "Apache Airavata".into(),
+            version:      "0.21".into(),
+            description:  "Distributed science gateway framework — execute and manage computational jobs and workflows on HPC clusters, supercomputers, national grids, and academic/commercial clouds. Enables large-scale agent workflows.".into(),
+            author:       "Apache Software Foundation".into(),
+            kind:         PluginKind::DataPipeline,
+            capabilities: vec![
+                "compute:hpc".into(), "gateway:science".into(), "workflow:distributed".into(),
+                "job:submit".into(), "job:monitor".into(), "job:manage".into(),
+                "cluster:supercomputer".into(), "grid:national".into(), "cloud:academic".into(),
+            ],
+            config_keys:  vec![
+                "AIRAVATA_API_HOST".into(), "AIRAVATA_API_PORT".into(),
+                "AIRAVATA_GATEWAY_ID".into(), "AIRAVATA_AUTH_TOKEN".into(),
+            ],
+            enabled:      std::env::var("AIRAVATA_API_HOST").is_ok(),
+            loaded:       false,
+            homepage:     Some("https://airavata.apache.org".into()),
+            nodes: vec![
+                PluginNode {
+                    id:           "tool:airavata:submit".into(),
+                    label:        "Airavata Job Submit".into(),
+                    kind:         "tool".into(),
+                    capabilities: vec!["job:submit".into(), "compute:hpc".into()],
+                    edges_to:     vec!["agent:build".into(), "agent:deploy".into(), "agent:observe".into()],
+                    capability_required: "job:submit".into(),
+                },
+                PluginNode {
+                    id:           "tool:airavata:monitor".into(),
+                    label:        "Airavata Job Monitor".into(),
+                    kind:         "tool".into(),
+                    capabilities: vec!["job:monitor".into(), "workflow:distributed".into()],
+                    edges_to:     vec!["agent:observe".into(), "sink:stream".into()],
+                    capability_required: "job:monitor".into(),
+                },
+                PluginNode {
+                    id:           "source:airavata:gateway".into(),
+                    label:        "Airavata Science Gateway".into(),
+                    kind:         "source".into(),
+                    capabilities: vec!["gateway:science".into(), "grid:national".into()],
+                    edges_to:     vec!["agent:plan".into(), "agent:observe".into()],
+                    capability_required: "gateway:science".into(),
+                },
+            ],
+            data_sources: vec![
+                "airavata_experiments".into(), "airavata_jobs".into(),
+                "airavata_applications".into(), "airavata_gateways".into(),
+            ],
+        },
+        PluginDescriptor {
+            id:           "plugin_llamars".into(),
+            name:         "llama-rs (Local LLM)".into(),
+            version:      "0.16".into(),
+            description:  "Pure Rust local LLM inference — LLaMA-family models (llama2, mistral, phi, etc.) run directly in-process. Zero network, zero cost, full control. pkg:cargo/llama-rs".into(),
+            author:       "llama-rs contributors".into(),
+            kind:         PluginKind::ComputeProvider,
+            capabilities: vec![
+                "inference:local".into(), "inference:llama".into(), "inference:rust".into(),
+                "offline:true".into(), "model:gguf".into(), "model:llama2".into(),
+            ],
+            config_keys:  vec!["LLAMA_MODEL_PATH".into(), "LLAMA_THREADS".into()],
+            enabled:      std::env::var("LLAMA_MODEL_PATH").is_ok(),
+            loaded:       false,
+            homepage:     Some("https://crates.io/crates/llama-rs".into()),
+            nodes: vec![
+                PluginNode {
+                    id:           "compute:llamars".into(),
+                    label:        "llama-rs Inference".into(),
+                    kind:         "tool".into(),
+                    capabilities: vec!["inference:local".into(), "inference:llama".into()],
+                    edges_to:     vec!["agent:plan".into(), "agent:build".into(), "agent:review".into()],
+                    capability_required: "inference:local".into(),
+                },
+            ],
+            data_sources: vec![],
+        },
     ]
 }
 
