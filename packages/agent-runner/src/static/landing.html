@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autonomyx Platform</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e2e8f0;line-height:1.6}
+  .hero{padding:60px 40px 40px;border-bottom:1px solid #1e293b}
+  .hero h1{font-size:2.4rem;font-weight:700;background:linear-gradient(135deg,#6366f1,#a78bfa,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+  .hero p{color:#94a3b8;font-size:1.05rem;max-width:600px}
+  .badge{display:inline-block;background:#1e293b;color:#38bdf8;border:1px solid #334155;border-radius:20px;padding:2px 12px;font-size:0.8rem;margin-top:12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:1px;background:#1e293b;border-top:1px solid #1e293b}
+  .group{background:#0d1117;padding:28px 32px}
+  .group h2{font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:#6366f1;margin-bottom:16px}
+  .route{display:flex;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px solid #0f172a}
+  .route:last-child{border-bottom:none}
+  .method{font-family:monospace;font-size:0.7rem;font-weight:700;padding:2px 6px;border-radius:3px;min-width:40px;text-align:center;flex-shrink:0}
+  .GET{background:#14532d;color:#4ade80}.POST{background:#1e1b4b;color:#a78bfa}
+  .DELETE{background:#450a0a;color:#f87171}.WS{background:#0c2540;color:#38bdf8}
+  .path{font-family:monospace;font-size:0.82rem;color:#cbd5e1;flex:1;word-break:break-all}
+  .desc{font-size:0.75rem;color:#475569;margin-top:1px}
+  .footer{padding:32px 40px;border-top:1px solid #1e293b;display:flex;gap:24px;flex-wrap:wrap;align-items:center}
+  .footer a{color:#6366f1;text-decoration:none;font-size:0.85rem}
+  .footer a:hover{color:#a78bfa}
+  .pill{background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:10px 16px;font-size:0.8rem;color:#64748b}
+  .pill span{color:#e2e8f0;font-weight:600}
+</style>
+</head>
+<body>
+<div class="hero">
+  <h1>Autonomyx Platform</h1>
+  <p>Next-generation multi-ecosystem AI agent platform — govern, deploy, observe, align. Everything extendable.</p>
+  <span class="badge">openautonomyx.com</span>
+  <span class="badge" style="margin-left:8px;color:#4ade80;border-color:#14532d">&#9679; Live</span>
+</div>
+<div class="grid">
+
+  <div class="group">
+    <h2>Core</h2>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/health</div><div class="desc">Platform health + version</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/agents</div><div class="desc">List agents</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/agents</div><div class="desc">Create agent</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/agents/:id/manifest</div><div class="desc">Instruction manual + constraint axioms</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/agents/:id/tools</div><div class="desc">MCP tool schema per capability</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/runs</div><div class="desc">List runs</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/runs</div><div class="desc">Start a run</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/apps</div><div class="desc">List applications</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/apps</div><div class="desc">Create application (.ayx declaration)</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Lifecycle + Fabric</h2>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/lifecycle/:artifact/:stage</div><div class="desc">Open a gate</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/lifecycle/:artifact/:stage</div><div class="desc">Gate status</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/lifecycle/:artifact/feasibility/:stage</div><div class="desc">Pre-flight feasibility check</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/fabric/log</div><div class="desc">Full fabric event log</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/fabric/log/:artifact</div><div class="desc">Events for one artifact</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Opt-in — Extend or Align</h2>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/optin/extend</div><div class="desc">Register a capability / governance node — no restart needed</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/optin/align</div><div class="desc">7-value alignment check: verdict + score + guidance</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/optin</div><div class="desc">List all opt-ins</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/optin/summary</div><div class="desc">Stats + philosophy</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/optin/:id</div><div class="desc">Get opt-in record</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/optin/:id/activate</div><div class="desc">Promote approved &#8594; active</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/optin/:id/withdraw</div><div class="desc">Voluntarily withdraw</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Goals</h2>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/goals/missions</div><div class="desc">Declare agent mission</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/goals</div><div class="desc">Create goal</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/goals</div><div class="desc">List goals</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/goals/:id/align</div><div class="desc">7-value alignment check</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/goals/:id/activate</div><div class="desc">Activate aligned goal</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/goals/:id/impact</div><div class="desc">Record world impact metric</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/goals/summary</div><div class="desc">Goals + impact progress</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Governance Graph</h2>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/govgraph/nodes</div><div class="desc">All governance nodes</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/govgraph/nodes</div><div class="desc">Add node</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/govgraph/paths?from=&amp;to=</div><div class="desc">Find governance paths (BFS, max 5)</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/govgraph/check</div><div class="desc">Check path traversal for actor</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/govgraph/execute</div><div class="desc">Execute a governance path</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Plugins</h2>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/plugins</div><div class="desc">List all (12 built-in)</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/plugins</div><div class="desc">Register custom plugin</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/plugins/summary</div><div class="desc">Counts by kind</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/plugins/capabilities</div><div class="desc">All available capabilities</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/plugins/:id</div><div class="desc">Get plugin</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/plugins/:id/enable</div><div class="desc">Enable</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/plugins/:id/disable</div><div class="desc">Disable</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Search + Discovery</h2>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/search?q=&amp;kinds=&amp;limit=</div><div class="desc">Universal open search across all platform data</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/openapi.json</div><div class="desc">OpenAPI 3.1 spec</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/routes</div><div class="desc">All routes as JSON</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Blockchain + Storage</h2>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/blockchain/did/anchor</div><div class="desc">Anchor DID on-chain</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/blockchain/did/:did</div><div class="desc">Resolve DID document</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/blockchain/summary</div><div class="desc">Chain context + bridge status</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/storage/artifacts</div><div class="desc">Store artifact (policy-gated, milestone-bound)</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/storage/artifacts/:id</div><div class="desc">Retrieve artifact</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/storage/projects</div><div class="desc">List projects</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Dashboards + ComputeKube</h2>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/dashboard</div><div class="desc">List (4 built-in + custom)</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/dashboard</div><div class="desc">Create custom dashboard</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/dashboard/:id/render</div><div class="desc">Render with live data</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/computekube/jobs</div><div class="desc">Spawn Kubernetes compute job</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/computekube/jobs/:id</div><div class="desc">Job status</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/computekube/jobs/:id/cancel</div><div class="desc">Cancel job</div></div></div>
+  </div>
+
+  <div class="group">
+    <h2>Protocols + Streams</h2>
+    <div class="route"><span class="method WS">WS</span><div><div class="path">/ws/:run_id</div><div class="desc">Run event stream</div></div></div>
+    <div class="route"><span class="method WS">WS</span><div><div class="path">/ws/fabric</div><div class="desc">Fabric event stream</div></div></div>
+    <div class="route"><span class="method WS">WS</span><div><div class="path">/ws/stream</div><div class="desc">Unified platform stream</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/mcp</div><div class="desc">MCP JSON-RPC 2.0 — platform as AI tool</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/transfer</div><div class="desc">Peer egress push (egress-only)</div></div></div>
+    <div class="route"><span class="method POST">POST</span><div><div class="path">/api/aip/message</div><div class="desc">Agent-to-agent (DID + Ed25519)</div></div></div>
+    <div class="route"><span class="method GET">GET</span><div><div class="path">/api/peers</div><div class="desc">Federation peers</div></div></div>
+  </div>
+
+</div>
+<div class="footer">
+  <a href="/openapi.json">OpenAPI JSON</a>
+  <a href="/api/routes">Routes JSON</a>
+  <a href="/health">Health</a>
+  <a href="/api/plugins">Plugins</a>
+  <a href="/api/govgraph/nodes">Governance Graph</a>
+  <a href="/api/goals/summary">Goals</a>
+  <a href="/api/optin/summary">Opt-in</a>
+  <a href="/api/search?q=agent">Search</a>
+  <div class="pill">Auth: <span>Authorization: Bearer &lt;API_KEY&gt;</span></div>
+  <div class="pill">openautonomyx.com</div>
+</div>
+</body>
+</html>

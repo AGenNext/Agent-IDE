@@ -3,6 +3,7 @@
 // Single binary. All gates. All fabric. All federation. MCP server.
 // Runs on any OS (Linux/macOS/Windows), any cloud, any infra.
 // Hardened surface: rate limit, body limit, security headers, auth failure tracking.
+#![recursion_limit = "512"]
 // Deny by default. Prove identity before opening any gate.
 // Freedom, not free. openautonomyx.com
 
@@ -187,6 +188,10 @@ async fn main() {
         .nest("/api", routes::search::router(state.clone()))
         // Opt-in — extend the platform or align intent with 7 values
         .nest("/api", routes::optin::router(state.clone()))
+        // OpenAPI spec + route discovery — self-documenting platform
+        .merge(routes::openapi::router())
+        // Landing page — GET / serves the full route map as HTML
+        .merge(routes::landing::router())
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────

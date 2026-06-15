@@ -24,3 +24,5 @@ pub mod dashboard;
 pub mod plugin;
 pub mod search;
 pub mod optin;
+pub mod openapi;
+pub mod landing;
