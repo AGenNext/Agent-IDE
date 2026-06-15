@@ -208,6 +208,9 @@ impl ComputeEngine {
         match provider {
             ComputeProvider::Anthropic => Self::dispatch_anthropic(req).await,
             ComputeProvider::Ollama    => Self::dispatch_ollama(req).await,
+            ComputeProvider::Local if req.model.starts_with("buildr") => {
+                Self::dispatch_buildr(req).await
+            }
             _                          => Self::dispatch_stub(req),
         }
     }
@@ -302,6 +305,52 @@ impl ComputeEngine {
         }
     }
 
+    /// Apache Buildr — invoke a JVM build task via Buildr's Rake HTTP interface.
+    /// BUILDR_RAKE_URL must point to a running buildr-server (e.g. http://localhost:7071).
+    /// Falls back to stub if not configured.
+    async fn dispatch_buildr(req: &ComputeRequest) -> (String, u64, u64, String) {
+        let base = std::env::var("BUILDR_RAKE_URL")
+            .unwrap_or_else(|_| "http://localhost:7071".into());
+
+        // Parse task name from the model field (e.g. "buildr:test", "buildr:compile")
+        let task = if req.model.contains(':') {
+            req.model.splitn(2, ':').nth(1).unwrap_or("build").to_string()
+        } else {
+            "build".to_string()
+        };
+
+        let payload = json!({
+            "task":    task,
+            "project": req.context.get("project").and_then(|v| v.as_str()).unwrap_or("default"),
+            "args":    req.task,
+        });
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build();
+
+        match client {
+            Ok(c) => match c.post(format!("{}/run", base))
+                .header("content-type", "application/json")
+                .json(&payload)
+                .send().await
+            {
+                Ok(resp) => {
+                    let status  = resp.status().as_u16();
+                    let body    = resp.text().await.unwrap_or_default();
+                    let tokens  = (body.len() / 4) as u64 + 20;
+                    let outcome = if status < 300 { "end_turn" } else { "error" };
+                    let output  = format!("[buildr:{}] status={} {}", task, status, body);
+                    (output, (req.task.len() / 4) as u64, tokens, outcome.into())
+                }
+                Err(e) => {
+                    (format!("[buildr:{}] dispatch error: {}", task, e), 10, 10, "error".into())
+                }
+            },
+            Err(e) => (format!("[buildr] client error: {}", e), 0, 0, "error".into()),
+        }
+    }
+
     /// Stub — returns structured placeholder when provider not yet implemented.
     fn dispatch_stub(req: &ComputeRequest) -> (String, u64, u64, String) {
         // Realistic token estimates from task length
@@ -348,6 +397,14 @@ pub fn engine_summary() -> Value {
                 "ready":  groq_ready,
                 "models": ["llama3-70b-8192", "mixtral-8x7b-32768"],
                 "speed":  "800 tok/s",
+            },
+            "buildr": {
+                "ready":    std::env::var("BUILDR_RAKE_URL").is_ok() || std::env::var("BUILDR_HOME").is_ok(),
+                "url":      std::env::var("BUILDR_RAKE_URL").ok(),
+                "tasks":    ["compile", "test", "package", "publish", "clean"],
+                "targets":  ["java", "scala", "kotlin", "groovy"],
+                "invoke":   "model=buildr:compile|buildr:test|buildr:publish",
+                "homepage": "https://buildr.apache.org",
             },
         },
         "device_profiles": {
