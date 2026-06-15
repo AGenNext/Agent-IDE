@@ -1,6 +1,12 @@
 // Agent runtime — ReAct loop, fully provider-independent.
 // LLM backend is selected at call time from model string + env vars.
 // Each run is an isolated Tokio task; state is shared via AppState.
+//
+// Model modes:
+//   "eq:<expr>"   — equation agent: evaluates an arithmetic expression; no LLM call.
+//                   Scales to 10,000+ concurrent agents at near-zero cost.
+//   "rule:<json>" — rule agent: evaluates a JSON rule tree; no LLM call.
+//   anything else — LLM agent: ReAct loop via configured provider.
 
 use std::sync::Arc;
 use serde_json::{json, Value};
@@ -28,8 +34,109 @@ You are a helpful Autonomyx agent. Think step by step.\
 /// Spawn the ReAct loop as a Tokio task — non-blocking, fully parallel.
 pub fn spawn_run(state: Arc<AppState>, req: RunRequest) {
     tokio::spawn(async move {
-        run_loop(state, req).await;
+        // Route to the right engine based on model prefix
+        if req.model.starts_with("eq:") || req.model == "equation" {
+            equation_run(state, req).await;
+        } else if req.model.starts_with("rule:") {
+            rule_run(state, req).await;
+        } else {
+            run_loop(state, req).await;
+        }
     });
+}
+
+// ── Equation agent — no LLM, scales to 10k+ concurrent ──────────────────────
+//
+// model = "eq:<expr>"      e.g. "eq:runs.completed / runs.total * 100"
+// model = "equation"       + task contains the expression
+//
+// Evaluates arithmetic using platform_vars (25+ live platform metrics).
+// Zero cost. Microsecond latency. No API key required.
+
+async fn equation_run(state: Arc<AppState>, req: RunRequest) {
+    let emit = |step_type: &str, content: &str| {
+        state.add_run_step(&req.run_id, step_type, content);
+        let msg = json!({ "type": step_type, "content": content, "runId": &req.run_id }).to_string();
+        state.broadcast_to_run(&req.run_id, &msg);
+    };
+
+    let expr = if req.model.starts_with("eq:") {
+        req.model["eq:".len()..].to_string()
+    } else {
+        req.task.clone()
+    };
+
+    emit("thought", &format!("equation agent: eval `{expr}`"));
+
+    let vars = crate::arithmetic::platform_vars(&state);
+    match crate::arithmetic::eval_expr(&expr, &vars) {
+        Ok(result) => {
+            emit("result", &format!("{}", result));
+            state.finish_run(&req.run_id, RunStatus::Completed);
+        }
+        Err(e) => {
+            emit("error", &format!("equation error: {e}"));
+            state.finish_run(&req.run_id, RunStatus::Failed);
+        }
+    }
+}
+
+// ── Rule agent — JSON decision tree, no LLM ──────────────────────────────────
+//
+// model = "rule:<json>"   e.g. "rule:{\"if\":\"runs.failed > 5\",\"then\":\"alert\",\"else\":\"ok\"}"
+// task  = JSON rule tree (alternative to encoding in model string)
+//
+// Rule format: { "if": "<expr>", "then": "<string>", "else": "<string>" }
+// Nested: "then" can itself be a rule object for chaining.
+
+async fn rule_run(state: Arc<AppState>, req: RunRequest) {
+    let emit = |step_type: &str, content: &str| {
+        state.add_run_step(&req.run_id, step_type, content);
+        let msg = json!({ "type": step_type, "content": content, "runId": &req.run_id }).to_string();
+        state.broadcast_to_run(&req.run_id, &msg);
+    };
+
+    let rule_json = if req.model.starts_with("rule:") {
+        req.model["rule:".len()..].to_string()
+    } else {
+        req.task.clone()
+    };
+
+    let rule: Value = match serde_json::from_str(&rule_json) {
+        Ok(v) => v,
+        Err(e) => {
+            emit("error", &format!("rule parse error: {e}"));
+            state.finish_run(&req.run_id, RunStatus::Failed);
+            return;
+        }
+    };
+
+    emit("thought", "rule agent: evaluating decision tree");
+
+    let vars = crate::arithmetic::platform_vars(&state);
+    let result = eval_rule(&rule, &vars);
+    emit("result", &result);
+    state.finish_run(&req.run_id, RunStatus::Completed);
+}
+
+fn eval_rule(rule: &Value, vars: &std::collections::HashMap<String, f64>) -> String {
+    if let (Some(cond), Some(then_branch), Some(else_branch)) = (
+        rule.get("if").and_then(|v| v.as_str()),
+        rule.get("then"),
+        rule.get("else"),
+    ) {
+        let passed = crate::arithmetic::eval_expr(cond, vars)
+            .map(|v| v != 0.0)
+            .unwrap_or(false);
+        let branch = if passed { then_branch } else { else_branch };
+        if branch.is_object() {
+            eval_rule(branch, vars)
+        } else {
+            branch.as_str().unwrap_or(&branch.to_string()).to_string()
+        }
+    } else {
+        rule.as_str().unwrap_or(&rule.to_string()).to_string()
+    }
 }
 
 async fn run_loop(state: Arc<AppState>, req: RunRequest) {
