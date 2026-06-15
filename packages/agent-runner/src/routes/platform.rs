@@ -2,9 +2,11 @@
 // GET /api/platform  — platform identity, cloud context, capabilities
 // GET /api/theory    — the theory of everything: meta model summary
 
-use axum::{routing::get, Json, Router};
+use axum::{routing::get, Json, Router, extract::State};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use crate::cloud::PlatformIdentity;
+use crate::AppState;
 
 async fn platform_identity() -> Json<Value> {
     let identity = PlatformIdentity::new();
@@ -79,8 +81,14 @@ async fn theory() -> Json<Value> {
     }))
 }
 
-pub fn router() -> Router {
+async fn multiserver_status(State(s): State<Arc<AppState>>) -> Json<Value> {
+    Json(crate::multiserver::bridge_summary(&s))
+}
+
+pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/platform", get(platform_identity))
-        .route("/theory",   get(theory))
+        .route("/platform",    get(platform_identity))
+        .route("/theory",      get(theory))
+        .route("/multiserver", get(multiserver_status))
+        .with_state(state)
 }

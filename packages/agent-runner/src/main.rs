@@ -45,6 +45,7 @@ mod optin;
 mod optin_middleware;
 mod authmatic;
 mod arithmetic;
+mod multiserver;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -159,7 +160,7 @@ async fn main() {
         // Usage + billing
         .nest("/api", routes::usage::router(state.clone()))
         // Platform identity + world model
-        .nest("/api", routes::platform::router())
+        .nest("/api", routes::platform::router(state.clone()))
         // Onboarding — chat-based configuration
         .nest("/api", routes::onboarding::router(state.clone()))
         // Support + health
@@ -259,6 +260,7 @@ async fn main() {
 
     controller::start(state.clone());
     loop_coordinator::start(state.clone());
+    multiserver::start(state.clone());
 
     // Log hardened attack surface at boot
     hardening::log_surface();
