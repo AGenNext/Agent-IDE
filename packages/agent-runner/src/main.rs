@@ -51,6 +51,7 @@ mod reconciler;
 mod megaverse;
 mod teams;
 mod cncf;
+mod theory;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -228,6 +229,8 @@ async fn main() {
         .nest("/api", routes::teams::router(state.clone()))
         // CNCF alignment — cloud-native conformance map + gap analysis
         .nest("/api", routes::cncf::router())
+        // Theory — verified theoretical foundations, queryable at runtime
+        .nest("/api", routes::theory::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
         .layer(middleware::from_fn({
