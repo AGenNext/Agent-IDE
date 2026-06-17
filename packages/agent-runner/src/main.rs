@@ -155,13 +155,9 @@ async fn main() {
     // ── MegaAgent — register singleton at startup ─────────────────────────────
     mega_agent::register(&state);
 
-    // ── ConfigDB (SurrealDB) — async upgrade from in-memory stub ─────────────
-    match configdb::ConfigDB::connect().await {
-        Ok(db) => {
-            tracing::info!("configdb: SurrealDB connected — live queries active");
-            state.fabric.wire_surreal(std::sync::Arc::new(db));
-        }
-        Err(e) => tracing::warn!(error = %e, "configdb: in-memory stub (SurrealDB not reachable)"),
+    // ── ConfigDB (SurrealDB) — connect embedded engine (mem:// or rocksdb://) ──
+    if let Err(e) = state.config.connect().await {
+        tracing::warn!(error = %e, "configdb: SurrealDB init failed — continuing without persistence");
     }
 
     // ── Platform identity ─────────────────────────────────────────────────────

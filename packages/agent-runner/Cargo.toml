@@ -44,7 +44,7 @@ async-trait   = "0.1"
 # ConfigDB — SurrealDB (embedded memory/RocksDB or remote cluster)
 # Features: kv-mem (dev), kv-rocksdb (device/home server), native-tls (remote)
 # "native everywhere": same crate compiles for Linux/macOS/Windows/WASM
-surrealdb = { version = "1", default-features = false, features = ["kv-mem"] }
+surrealdb = { version = "1", default-features = false, features = ["kv-mem", "kv-rocksdb"] }
 
 # Tracing
 tracing            = "0.1"
