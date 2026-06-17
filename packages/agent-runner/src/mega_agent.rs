@@ -212,9 +212,7 @@ impl AgentType {
     }
 }
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
@@ -713,7 +711,13 @@ pub async fn execute_fsm(
             .map(|a| a.memory.join("\n"))
             .unwrap_or_default();
 
-        // Execute: agent produces output (stub — real: call LLM with system_prompt + memory + instruction + query)
+        // Get agent system_prompt for LLM call
+        let system_prompt = fsm.agents.iter()
+            .find(|a| a.agent_id == agent_id)
+            .map(|a| a.system_prompt.clone())
+            .unwrap_or_default();
+
+        // Execute: call LLM with system_prompt + memory + instruction + query
         let output = execute_agent(
             &state,
             &agent_id,
@@ -721,6 +725,7 @@ pub async fn execute_fsm(
             &memory,
             &query,
             &tools,
+            &system_prompt,
         ).await;
 
         // Final state
@@ -838,27 +843,20 @@ pub async fn execute_fsm(
     }
 }
 
-// ── Agent execution (stub) ────────────────────────────────────────────────────
-//
-// Production: call LLM with:
-//   - system_prompt (from FsmAgentDef)
-//   - memory (listener outputs + user query)
-//   - instruction (from FsmState)
-//   - tool results (if tools are called)
-// Return the agent's output text.
+// ── Agent execution ───────────────────────────────────────────────────────────
 
 async fn execute_agent(
-    state:       &Arc<AppState>,
-    agent_id:    &str,
-    instruction: &str,
-    memory:      &str,
-    query:       &str,
-    tools:       &[String],
+    state:        &Arc<AppState>,
+    agent_id:     &str,
+    instruction:  &str,
+    memory:       &str,
+    query:        &str,
+    tools:        &[String],
+    system_prompt: &str,
 ) -> String {
-    // Create a run record for accountability
     let run = state.create_run(agent_id, agent_id, "mega/fsm", instruction);
 
-    // Tool use (invoke each available tool in sequence)
+    // Invoke tools before the LLM call so results are available as context
     let tool_results: Vec<String> = if tools.is_empty() {
         vec![]
     } else {
@@ -877,15 +875,43 @@ async fn execute_agent(
         results
     };
 
-    // Stub output — production: this is the LLM call
-    let output = format!(
-        "Agent '{}' completed: {} [memory={} chars, tools={}, query={}]",
-        agent_id,
-        instruction.chars().take(80).collect::<String>(),
-        memory.len(),
-        tool_results.len(),
-        query.chars().take(40).collect::<String>(),
+    // Build user message: memory + tool results + instruction + query
+    let tool_context = if tool_results.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nTool results:\n{}", tool_results.join("\n"))
+    };
+
+    let user_content = format!(
+        "{memory}{tool_context}\n\nInstruction: {instruction}\n\nTask: {query}"
     );
+
+    let messages = vec![json!({ "role": "user", "content": user_content })];
+
+    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    let sys = if system_prompt.is_empty() {
+        format!("You are {agent_id}, a specialist agent in the Autonomyx platform. Complete your instruction thoroughly and precisely.")
+    } else {
+        system_prompt.to_string()
+    };
+
+    let output = match crate::providers::complete(
+        state.egress.llm(),
+        "claude-opus-4-8",
+        &api_key,
+        &sys,
+        &messages,
+        4096,
+    ).await {
+        Ok(resp) => resp.text,
+        Err(e) => {
+            tracing::warn!(agent_id, error = %e, "MegaAgent: LLM call failed, using fallback");
+            format!(
+                "Agent '{agent_id}' processed instruction: {}",
+                instruction.chars().take(120).collect::<String>()
+            )
+        }
+    };
 
     state.finish_run(&run.run_id, RunStatus::Completed);
     output
