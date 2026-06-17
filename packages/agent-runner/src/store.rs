@@ -17,6 +17,7 @@ use crate::computekube::ComputeKube;
 use crate::plugin::PluginRegistry;
 use crate::optin::OptInRegistry;
 use crate::authmatic::AuthMatic;
+use crate::megaverse::Megaverse;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -142,6 +143,8 @@ pub struct AppState {
     pub optin: OptInRegistry,
     // Auth-matic — automatic auth: JIT keys, enrollment tokens, peer credentials
     pub authmatic: AuthMatic,
+    // Megaverse — unified world model: every entity, every relationship, every surface
+    pub megaverse: Arc<Megaverse>,
 }
 
 impl AppState {
@@ -182,6 +185,7 @@ impl AppState {
             plugins:     PluginRegistry::new(),
             optin:       OptInRegistry::new(),
             authmatic:   AuthMatic::new(),
+            megaverse:   Arc::new(Megaverse::new()),
         }
     }
 

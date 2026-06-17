@@ -29,3 +29,4 @@ pub mod landing;
 pub mod authmatic;
 pub mod arithmetic;
 pub mod providers;
+pub mod megaverse;

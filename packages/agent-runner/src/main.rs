@@ -48,6 +48,7 @@ mod arithmetic;
 mod multiserver;
 mod provider_cert;
 mod reconciler;
+mod megaverse;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -219,6 +220,8 @@ async fn main() {
         .nest("/api", routes::feedback::router(state.clone()))
         // Provider certification — certified providers only
         .nest("/api", routes::providers::router(state.clone()))
+        // Megaverse — unified world model
+        .nest("/api", routes::megaverse::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
         .layer(middleware::from_fn({
