@@ -1,15 +1,18 @@
 // Surface hardening — defense-in-depth at the ingress boundary.
 //
 // Layers (applied in order, outermost first):
-//   1. Request timeout          — every request dies at 30s (configurable)
-//   2. Body size limit          — 1MB default; 16KB for MCP/onboarding chat
-//   3. Rate limiter             — per-IP token bucket; 60 req/min default
+//   1. CatchPanic               — handler panics return 500, not server crash
+//   2. Request timeout          — every request dies at 30s (configurable)
+//   3. Body size limit          — 1MB default; 16KB for MCP/onboarding chat
 //   4. Security headers         — HSTS, X-Frame-Options, X-Content-Type-Options, CSP
-//   5. Auth (gateway.rs)        — Bearer token, constant-time comparison
-//   6. Egress policy (gateway.rs) — push-only on /transfer
+//   5. Rate limiter             — per-IP token bucket, expensive ops cost more
+//   6. IP ban list              — blocks IPs after N consecutive auth failures
+//   7. Auth (gateway.rs)        — Bearer token, constant-time, cached key, unique req-id
+//   8. Egress policy (gateway.rs) — push-only on /transfer
 //
 // Every layer is independently configurable via env vars.
 // Deny by default. Prove identity before opening any gate.
+// Production precheck: call hardening::production_precheck() at startup.
 
 use std::{
     collections::HashMap,
@@ -141,15 +144,19 @@ impl RateLimiter {
     }
 }
 
-// Path costs — expensive operations cost more tokens.
+// Path costs — expensive operations burn more rate-limit tokens.
 fn path_cost(path: &str) -> u32 {
     if path.starts_with("/api/onboarding") && path.ends_with("/chat") {
-        5   // LLM call — expensive
+        10  // LLM call — expensive
+    } else if path.starts_with("/api/runs") && path.ends_with('/') || path == "/api/runs" {
+        8   // agent run dispatch — may trigger LLM
     } else if path == "/mcp" {
-        3   // tool dispatch
+        5   // tool dispatch
     } else if path.starts_with("/api/lifecycle") {
-        2   // gate transition
-    } else if path == "/health" {
+        3   // gate transition
+    } else if path.starts_with("/api/providers/certify") {
+        3   // provider probe
+    } else if path == "/health" || path == "/ready" {
         0   // free — always allow probes
     } else {
         1
@@ -281,13 +288,133 @@ impl AuthFailureTracker {
     }
 }
 
+// ── IP ban list — blocks IPs after N consecutive auth failures ────────────────
+// Separate from RateLimiter; survives rate-limit resets.
+// Checked before rate limit so banned IPs don't consume rate limit slots.
+
+#[derive(Clone, Default)]
+pub struct IpBanList {
+    banned: Arc<RwLock<HashMap<String, Instant>>>,
+}
+
+impl IpBanList {
+    pub fn new() -> Self { Self::default() }
+
+    pub fn is_banned(&self, ip: &str) -> bool {
+        let ban_secs = std::env::var("AUTH_BAN_SECS")
+            .ok().and_then(|v| v.parse().ok())
+            .unwrap_or(300u64);
+        let now = Instant::now();
+        if let Some(&banned_at) = self.banned.read().unwrap().get(ip) {
+            now.duration_since(banned_at) < Duration::from_secs(ban_secs)
+        } else {
+            false
+        }
+    }
+
+    pub fn ban(&self, ip: &str) {
+        self.banned.write().unwrap().insert(ip.to_string(), Instant::now());
+        tracing::warn!(ip = %ip, "IP banned after repeated auth failures");
+    }
+
+    pub fn unban(&self, ip: &str) {
+        self.banned.write().unwrap().remove(ip);
+    }
+
+    pub fn prune(&self) {
+        let ban_secs = std::env::var("AUTH_BAN_SECS")
+            .ok().and_then(|v| v.parse().ok())
+            .unwrap_or(300u64);
+        let now = Instant::now();
+        self.banned.write().unwrap()
+            .retain(|_, t| now.duration_since(*t) < Duration::from_secs(ban_secs * 2));
+    }
+}
+
+// ── Audit log — structured record of every security-relevant event ────────────
+
+pub fn audit(event: &str, ip: &str, path: &str, detail: &str) {
+    tracing::warn!(
+        audit   = true,
+        event   = %event,
+        ip      = %ip,
+        path    = %path,
+        detail  = %detail,
+        "security audit"
+    );
+}
+
+// ── Production precheck — fail fast on unsafe configuration ──────────────────
+// Call at startup before binding the listener.
+// Returns a list of critical issues; caller should abort if non-empty.
+
+pub fn production_precheck() -> Vec<String> {
+    let mut issues = Vec::new();
+
+    let is_prod = std::env::var("PRODUCTION")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+
+    if !is_prod {
+        return issues; // dev mode: skip
+    }
+
+    // GATEWAY_API_KEY must be set and long enough
+    match std::env::var("GATEWAY_API_KEY") {
+        Err(_) => issues.push("GATEWAY_API_KEY is not set — server will run open (FATAL in PRODUCTION=true)".into()),
+        Ok(k) if k.len() < 32 => issues.push(format!(
+            "GATEWAY_API_KEY is only {} chars — minimum 32 required for production", k.len()
+        )),
+        _ => {}
+    }
+
+    // HSTS must be enabled (max_age > 0)
+    if let Ok(v) = std::env::var("HSTS_MAX_AGE_SECS") {
+        if v == "0" {
+            issues.push("HSTS_MAX_AGE_SECS=0 disables HSTS — not safe for production".into());
+        }
+    }
+
+    // CORS must not be wildcard in production
+    let cors = std::env::var("CORS_ALLOWED_ORIGINS").unwrap_or_default();
+    if cors.is_empty() {
+        issues.push("CORS_ALLOWED_ORIGINS not set — defaulting to wildcard '*' is not safe in production".into());
+    }
+
+    // Body limit must be sane (not too large)
+    if let Ok(v) = std::env::var("BODY_LIMIT_BYTES") {
+        if let Ok(n) = v.parse::<usize>() {
+            if n > 64 * 1024 * 1024 {
+                issues.push(format!("BODY_LIMIT_BYTES={n} exceeds 64MB — risk of OOM under attack"));
+            }
+        }
+    }
+
+    // Request timeout must be set
+    if let Ok(v) = std::env::var("REQUEST_TIMEOUT_SECS") {
+        if let Ok(n) = v.parse::<u64>() {
+            if n > 120 {
+                issues.push(format!("REQUEST_TIMEOUT_SECS={n} is very high — slow requests will hold threads"));
+            }
+        }
+    }
+
+    // Platform identity should be set for signed accountability records
+    if std::env::var("AUTONOMYX_IDENTITY_KEY").is_err() {
+        issues.push("AUTONOMYX_IDENTITY_KEY not set — accountability records will be unsigned".into());
+    }
+
+    issues
+}
+
 // ── CORS policy ───────────────────────────────────────────────────────────────
-// Production: restrict to known origins. Dev: allow all.
+// Production: restrict to known origins via CORS_ALLOWED_ORIGINS env var.
+// Dev mode: allow all (CORS_ALLOWED_ORIGINS not set).
 
 pub fn cors_origins() -> Vec<String> {
     std::env::var("CORS_ALLOWED_ORIGINS")
         .map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
-        .unwrap_or_else(|_| vec![])   // empty = "any" in CorsLayer (dev mode)
+        .unwrap_or_else(|_| vec![])
 }
 
 // ── Circuit breaker — build for failure ───────────────────────────────────────

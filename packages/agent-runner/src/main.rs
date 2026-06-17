@@ -57,9 +57,10 @@ use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
 use cli::Cli;
 use clap::Parser;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{Any, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tower_http::timeout::TimeoutLayer;
+use tower_http::catch_panic::CatchPanicLayer;
 use tracing_subscriber::{fmt, EnvFilter};
 use std::sync::Arc;
 use std::time::Duration;
@@ -109,15 +110,31 @@ async fn main() {
         "Autonomyx platform starting"
     );
 
-    // ── Hardening ─────────────────────────────────────────────────────────────
-    let rate_limiter = Arc::new(hardening::RateLimiter::new());
+    // ── Production precheck — fail fast on unsafe config ─────────────────────
+    let issues = hardening::production_precheck();
+    if !issues.is_empty() {
+        for issue in &issues {
+            tracing::error!(issue = %issue, "production config issue");
+        }
+        let is_prod = std::env::var("PRODUCTION").map(|v| v == "true" || v == "1").unwrap_or(false);
+        if is_prod {
+            eprintln!("FATAL: {} production config issue(s) found. Aborting.", issues.len());
+            std::process::exit(1);
+        }
+    }
 
-    // Prune stale rate-limit buckets every 5 minutes (prevent memory growth)
+    // ── Hardening ─────────────────────────────────────────────────────────────
+    let rate_limiter   = Arc::new(hardening::RateLimiter::new());
+    let auth_tracker   = Arc::new(hardening::AuthFailureTracker::new());
+    let ban_list       = Arc::new(hardening::IpBanList::new());
+
+    // Prune stale buckets every 5 minutes (prevent unbounded memory growth)
     {
-        let rl = rate_limiter.clone();
+        let rl  = rate_limiter.clone();
+        let bl  = ban_list.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(300));
-            loop { interval.tick().await; rl.prune(); }
+            loop { interval.tick().await; rl.prune(); bl.prune(); }
         });
     }
 
@@ -236,22 +253,41 @@ async fn main() {
         .layer(middleware::from_fn({
             let s = state.clone();
             move |req, next| contract::contract_layer(req, next, s.clone())
-        }))                                                        // 6. contract: oath + governance + fabric
-        .layer(middleware::from_fn(gateway::egress_policy))       // 5. egress: push-only /transfer
-        .layer(middleware::from_fn(gateway::ingress_gate))        // 4. auth: Bearer token, constant-time
+        }))                                                        // 7. contract: oath + governance + fabric
+        .layer(middleware::from_fn(gateway::egress_policy))       // 6. egress: push-only /transfer
+        .layer(middleware::from_fn({
+            let at = auth_tracker.clone();
+            let bl = ban_list.clone();
+            move |req, next| gateway::ingress_gate(req, next, at.clone(), bl.clone())
+        }))                                                        // 5. auth: Bearer + ban list + req-id
         .layer(middleware::from_fn({
             let rl = rate_limiter.clone();
             move |req, next| {
                 let rl = rl.clone();
                 hardening::rate_limit(req, next, rl)
             }
-        }))                                                        // 3. rate: per-IP token bucket
-        .layer(middleware::from_fn(hardening::request_guard))     // 2. guard: path + size check
-        .layer(middleware::from_fn(optin_middleware::optin_gap_filler)) // 0. gap: unknown routes → optin
+        }))                                                        // 4. rate: per-IP token bucket
+        .layer(middleware::from_fn(hardening::request_guard))     // 3. guard: path + size check
+        .layer(middleware::from_fn(optin_middleware::optin_gap_filler)) // 2. gap: unknown routes → optin
         .layer(middleware::from_fn(hardening::security_headers))  // 1. headers: HSTS, CSP, X-Frame
         .layer(DefaultBodyLimit::max(body_limit_bytes))           //    body: 4MB hard cap
         .layer(TimeoutLayer::new(Duration::from_secs(request_timeout_secs))) // timeout: 30s
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .layer({
+            // CORS: locked to env-configured origins in production; wildcard in dev
+            let origins = hardening::cors_origins();
+            if origins.is_empty() {
+                CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any)
+            } else {
+                let allowed: Vec<_> = origins.iter()
+                    .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
+                    .collect();
+                CorsLayer::new()
+                    .allow_origin(AllowOrigin::list(allowed))
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+            }
+        })
+        .layer(CatchPanicLayer::new())                            // 0. catch panics → 500, not crash
         .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
@@ -309,5 +345,36 @@ async fn main() {
         "Autonomyx platform ready — openautonomyx.com"
     );
 
-    axum::serve(listener, app).await.expect("serve failed");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("serve failed");
+
+    tracing::info!("Autonomyx platform shut down cleanly");
+}
+
+/// Graceful shutdown — waits for SIGTERM (k8s) or Ctrl-C (dev).
+/// In-flight requests are drained before the process exits.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c    => { tracing::info!("received Ctrl-C — shutting down"); },
+        _ = terminate => { tracing::info!("received SIGTERM — shutting down"); },
+    }
 }
