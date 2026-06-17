@@ -28,6 +28,10 @@ reqwest     = { version = "0.12", features = ["json", "stream"] }
 uuid        = { version = "1", features = ["v4"] }
 chrono      = { version = "0.4", features = ["serde"] }
 
+# Cryptographic hashing — trust chain (SHA-256 per gate link)
+sha2        = "0.10"
+hex         = "0.4"
+
 # Async utilities
 futures     = "0.3"
 tokio-stream = "0.1"

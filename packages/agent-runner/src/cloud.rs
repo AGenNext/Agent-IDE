@@ -200,6 +200,103 @@ fn device_capabilities(class: &DeviceClass) -> (Vec<&'static str>, Option<&'stat
     }
 }
 
+// ── Cloud stack manifest ──────────────────────────────────────────────────────
+//
+// The full layered declaration of the Autonomyx cloud-native stack.
+// Each layer is a named collection of CNCF-aligned components.
+// Stack is declarative — it describes intent, not just detection.
+// Use GET /api/cloud/stack to export for ArgoCD, Helm, or Terraform.
+
+pub fn cloud_stack() -> serde_json::Value {
+    let cloud   = CloudContext::detect();
+    let device  = DeviceContext::detect();
+    let ns      = std::env::var("K8S_NAMESPACE").unwrap_or_else(|_| "autonomyx".into());
+    let registry = std::env::var("REGISTRY_URL").unwrap_or_else(|_| "registry.autonomyx.io".into());
+
+    serde_json::json!({
+        "stack": "Autonomyx Cloud-Native Stack",
+        "version": env!("CARGO_PKG_VERSION"),
+        "namespace": ns,
+        "cloud": cloud,
+        "device": device,
+        "layers": {
+            "01_infrastructure": {
+                "label": "Infrastructure",
+                "components": [
+                    { "name": "kubernetes",   "role": "container orchestration",         "min_version": "1.28" },
+                    { "name": "containerd",   "role": "container runtime",               "min_version": "1.7"  },
+                    { "name": "cert-manager", "role": "TLS certificate lifecycle",       "version": "v1"       },
+                    { "name": "external-dns", "role": "DNS record management",           "optional": true      },
+                ]
+            },
+            "02_networking": {
+                "label": "Networking & Mesh",
+                "components": [
+                    { "name": "istio",          "role": "mTLS service mesh",              "mode": "STRICT"    },
+                    { "name": "cilium",         "role": "eBPF network policy",            "optional": true    },
+                    { "name": "caddy",          "role": "TLS ingress + reverse proxy",    "port": 443         },
+                    { "name": "envoy",          "role": "L7 proxy (via Istio sidecar)",   "injected": true    },
+                ]
+            },
+            "03_storage": {
+                "label": "Storage & Registry",
+                "components": [
+                    { "name": "zot",         "role": "OCI image + BOM attestation registry", "endpoint": registry },
+                    { "name": "surrealdb",   "role": "config + governance graph store",       "mode": "kv-mem|kv-rocksdb" },
+                    { "name": "longhorn",    "role": "distributed block storage (PVCs)",      "optional": true },
+                ]
+            },
+            "04_identity": {
+                "label": "Identity & Trust",
+                "components": [
+                    { "name": "spire",    "role": "SPIFFE workload identity (SVID)",     "optional": true    },
+                    { "name": "cosign",   "role": "image + BOM signing (Sigstore)",      "required": true    },
+                    { "name": "did:autonomyx", "role": "platform DID method",            "required": true    },
+                    { "name": "hsm",      "role": "hardware key storage for signing",    "optional": true    },
+                ]
+            },
+            "05_observability": {
+                "label": "Observability",
+                "components": [
+                    { "name": "opentelemetry", "role": "traces + metrics + logs",         "required": true  },
+                    { "name": "prometheus",    "role": "metrics scrape + alerting",        "port": 9090      },
+                    { "name": "grafana",       "role": "dashboard + SLO visualisation",    "port": 3000      },
+                    { "name": "jaeger",        "role": "distributed trace storage",        "optional": true  },
+                ]
+            },
+            "06_runtime": {
+                "label": "Autonomyx Runtime",
+                "components": [
+                    { "name": "autonomyx-runner",  "role": "core runtime + API server",  "port": 3001       },
+                    { "name": "pipeline",          "role": "Build→Sign→Push→Sync→Deploy→Run→Observe→Feedback" },
+                    { "name": "fabric",            "role": "event mesh — fills gaps between gates"           },
+                    { "name": "govgraph",          "role": "governance graph + JIT access grants"            },
+                ]
+            },
+            "07_gitops": {
+                "label": "GitOps & Supply Chain",
+                "components": [
+                    { "name": "argocd",  "role": "GitOps continuous delivery",     "app": std::env::var("ARGOCD_APP").unwrap_or_else(|_| "autonomyx".into()) },
+                    { "name": "flux",    "role": "GitOps alternative (optional)",   "optional": true },
+                    { "name": "cosign",  "role": "supply chain — signs all images", "required": true },
+                    { "name": "syft",    "role": "BOM generation (Cargo.lock→CycloneDX)", "optional": true },
+                ]
+            },
+            "08_scale": {
+                "label": "Scale & Resilience",
+                "components": [
+                    { "name": "hpa",    "role": "CPU-based horizontal pod autoscaler",          "api": "autoscaling/v2" },
+                    { "name": "keda",   "role": "event-driven autoscale (active_runs metric)",  "optional": true       },
+                    { "name": "pdb",    "role": "PodDisruptionBudget — minimum 1 replica",      "required": true       },
+                    { "name": "vpa",    "role": "VerticalPodAutoscaler (optional right-sizing)", "optional": true      },
+                ]
+            },
+        },
+        "trust_chain": "Build→Sign(cosign+BOM)→Push(Zot)→Sync(ArgoCD)→Deploy(k8s)→Run(Job)→Observe(OTel)→Feedback",
+        "breaks_at": "tamper — SHA-256 chain hash verified at every gate",
+    })
+}
+
 /// The platform identity — who we are, where we run, what we serve.
 /// "platform makes things real" — this is the runtime self-description.
 #[derive(Debug, Clone, Serialize, Deserialize)]

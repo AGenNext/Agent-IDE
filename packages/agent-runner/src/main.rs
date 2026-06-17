@@ -51,6 +51,7 @@ mod megaverse;
 mod teams;
 mod cncf;
 mod theory;
+mod scale;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -247,6 +248,10 @@ async fn main() {
         .nest("/api", routes::cncf::router())
         // Theory — verified theoretical foundations, queryable at runtime
         .nest("/api", routes::theory::router(state.clone()))
+        // Scale — autoscaling policy, HPA/KEDA manifests, concurrency governance
+        .nest("/api", routes::scale::router(state.clone()))
+        // Cloud stack — layered cloud-native deployment manifest
+        .nest("/api", routes::cloud::router())
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
         .layer(middleware::from_fn({

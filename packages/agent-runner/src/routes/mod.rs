@@ -33,3 +33,5 @@ pub mod megaverse;
 pub mod teams;
 pub mod cncf;
 pub mod theory;
+pub mod scale;
+pub mod cloud;

@@ -22,10 +22,40 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
+use sha2::{Sha256, Digest};
 
 use crate::lifecycle::{GateRecord, GateStatus, LifecycleRegistry, Oath, Stage};
 use crate::fabric::{Fabric, FabricEvent};
 use crate::bom::{build_bom, BomRecord, CargoDep, Provenance};
+
+// ── Trust chain ───────────────────────────────────────────────────────────────
+//
+// Every gate link = SHA256(prev_hash || stage_name || canonical_json(output)).
+// The genesis link uses the artifact ID as prev_hash.
+// Tamper detection: if the pipeline accumulates a payload and the embedded
+// _chain_hash doesn't match recomputed hash of the previous gate's output,
+// the next gate closes with TAMPER DETECTED. Chain breaks at tampering.
+
+pub fn chain_link(prev_hash: &str, stage: Stage, output: &Value) -> String {
+    let canonical = serde_json::to_string(output).unwrap_or_default();
+    let input = format!("{}::{}::{}", prev_hash, stage.as_str(), canonical);
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Verify the chain link embedded in a payload.
+/// Returns Ok(()) if the hash matches or is absent (genesis gate).
+/// Returns Err(reason) if the hash is present but wrong — tamper detected.
+pub fn verify_chain(payload: &Value, expected_hash: Option<&str>) -> Result<(), String> {
+    let embedded = payload.get("_chain_hash").and_then(|v| v.as_str());
+    match (embedded, expected_hash) {
+        (Some(got), Some(want)) if got != want => Err(format!(
+            "TAMPER DETECTED: chain hash mismatch — expected {want}, got {got}"
+        )),
+        _ => Ok(()),
+    }
+}
 
 // ── GateExecutor — build at gate ──────────────────────────────────────────────
 //
@@ -74,9 +104,12 @@ impl Pipeline {
     /// Drive an artifact through all gates from its current stage forward.
     /// Stops at the first closed gate (oath broke or executor returned Err).
     /// Idempotent: stages already reached are skipped.
+    /// Trust chain: each gate appends _chain_hash; the next gate verifies it — breaks at tamper.
     pub async fn run(&self, artifact: &str, initial_payload: Value) -> Vec<ExecutionResult> {
         let mut results = Vec::new();
         let mut payload = initial_payload;
+        // Genesis hash: artifact ID is the root of the chain
+        let mut prev_hash = chain_link(artifact, Stage::Build, &Value::Null);
 
         for executor in &self.executors {
             let stage = executor.stage();
@@ -87,6 +120,23 @@ impl Pipeline {
                     tracing::debug!(artifact, stage = stage.as_str(), "pipeline: stage already reached — skipping");
                     continue;
                 }
+            }
+
+            // Trust chain verification — break at tamper
+            if let Err(reason) = verify_chain(&payload, Some(&prev_hash)) {
+                let tamper_reason = reason.clone();
+                tracing::error!(artifact, stage = stage.as_str(), reason, "pipeline: TRUST CHAIN BROKEN");
+                let oath = Oath::new("chain_integrity", |_| Ok(()));
+                let rec = self.lifecycle.transition(artifact, stage, &oath,
+                    &serde_json::json!({ "closed": true }));
+                let closed_rec = GateRecord {
+                    status: GateStatus::Closed,
+                    detail: Some(tamper_reason.clone()),
+                    ..rec
+                };
+                self.fabric.emit(FabricEvent::closed(artifact, stage, &tamper_reason));
+                results.push(ExecutionResult { gate: closed_rec, output: None });
+                break;
             }
 
             // Execute — the build happens here
@@ -117,9 +167,14 @@ impl Pipeline {
 
             if rec.status == GateStatus::Open {
                 self.fabric.emit_gate(&rec, output.clone());
-                // Merge executor output into the running payload
+
+                // Advance the trust chain: link this gate's output into the chain
+                prev_hash = chain_link(&prev_hash, stage, &output);
+
+                // Merge executor output + chain link into running payload
                 if let (Value::Object(p), Value::Object(o)) = (&mut payload, &output) {
                     for (k, v) in o { p.insert(k.clone(), v.clone()); }
+                    p.insert("_chain_hash".into(), Value::String(prev_hash.clone()));
                 }
             }
 
@@ -133,6 +188,8 @@ impl Pipeline {
     }
 
     /// Run a single stage only (used by the lifecycle API for on-demand transitions).
+    /// Verifies trust chain: if payload carries _chain_hash, it must match the
+    /// previous gate's expected hash or the gate is closed — tamper breaks the chain.
     pub async fn run_stage(&self, artifact: &str, stage: Stage, payload: Value) -> ExecutionResult {
         let executor = self.executors.iter().find(|e| e.stage() == stage);
         match executor {
@@ -149,6 +206,21 @@ impl Pipeline {
                 ExecutionResult { gate: rec, output: None }
             }
             Some(executor) => {
+                // Trust chain: verify the embedded hash if present
+                if let Err(reason) = verify_chain(&payload, payload.get("_chain_hash").and_then(|v| v.as_str())) {
+                    tracing::error!(artifact, stage = stage.as_str(), reason, "run_stage: TRUST CHAIN BROKEN");
+                    let rec = GateRecord {
+                        id:              uuid::Uuid::new_v4().to_string(),
+                        artifact:        artifact.into(),
+                        stage,
+                        status:          GateStatus::Closed,
+                        oath:            "chain_integrity".to_string(),
+                        detail:          Some(reason),
+                        transitioned_at: chrono::Utc::now(),
+                    };
+                    return ExecutionResult { gate: rec, output: None };
+                }
+
                 match executor.execute(artifact, &payload).await {
                     Ok(output) => {
                         let oath = Oath::new(executor.oath_name(), |_| Ok(()));
