@@ -19,6 +19,7 @@ use crate::optin::OptInRegistry;
 use crate::authmatic::AuthMatic;
 use crate::megaverse::Megaverse;
 use crate::teams::TeamRegistry;
+use crate::gateway::EgressClient;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -148,6 +149,8 @@ pub struct AppState {
     pub megaverse: Arc<Megaverse>,
     // Teams — institutional agent teams: cross-sector, unicode-native, federation-aware
     pub teams: TeamRegistry,
+    // Egress — single shared HTTP client pool; all outbound calls go through here
+    pub egress: Arc<EgressClient>,
 }
 
 impl AppState {
@@ -190,6 +193,7 @@ impl AppState {
             authmatic:   AuthMatic::new(),
             megaverse:   Arc::new(Megaverse::new()),
             teams:       TeamRegistry::new(),
+            egress:      Arc::new(EgressClient::new()),
         }
     }
 

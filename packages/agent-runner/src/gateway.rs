@@ -29,10 +29,14 @@ use crate::hardening::{AuthFailureTracker, IpBanList};
 
 // ── Egress client registry ────────────────────────────────────────────────────
 
-/// A single shared HTTP client for all outbound calls.
-/// Connect timeout 10s, request timeout 120s, TLS required.
+/// Shared HTTP clients for all outbound calls.
+/// Single instance in AppState — connection pool is reused across all requests.
+/// Two clients:
+///   inner       — 120s timeout for LLM / peer / tool calls
+///   probe_inner — 5s timeout for health pings and cluster announces
 pub struct EgressClient {
-    inner: reqwest::Client,
+    inner:       reqwest::Client,
+    probe_inner: reqwest::Client,
 }
 
 impl EgressClient {
@@ -53,7 +57,15 @@ impl EgressClient {
             .build()
             .expect("failed to build egress HTTP client");
 
-        Self { inner }
+        let probe_inner = ClientBuilder::new()
+            .timeout(Duration::from_secs(5))
+            .connect_timeout(Duration::from_secs(3))
+            .https_only(is_prod)
+            .user_agent(concat!("autonomyx-runner/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .expect("failed to build probe HTTP client");
+
+        Self { inner, probe_inner }
     }
 
     /// LLM provider egress — HTTPS enforced when PRODUCTION=true.
@@ -69,6 +81,12 @@ impl EgressClient {
     /// Tool endpoint egress — URL validated by the tool definition.
     pub fn tool(&self) -> &reqwest::Client {
         &self.inner
+    }
+
+    /// Short-timeout client for health probes and cluster announces (5s cap).
+    /// Use for: provider cert ping, peer health check, cluster auto-announce.
+    pub fn probe(&self) -> &reqwest::Client {
+        &self.probe_inner
     }
 }
 

@@ -51,9 +51,8 @@ async fn add(State(state): State<Arc<AppState>>, Json(b): Json<PeerBody>) -> Jso
     // Parallel health ping — doesn't block the response
     let state2 = state.clone();
     tokio::spawn(async move {
-        let ok = reqwest::Client::new()
+        let ok = state2.egress.probe()
             .get(format!("{url}/health"))
-            .timeout(std::time::Duration::from_secs(5))
             .send().await
             .map(|r| r.status().is_success())
             .unwrap_or(false);
@@ -85,11 +84,10 @@ async fn push_agent(State(state): State<Arc<AppState>>, Json(b): Json<TransferBo
     let public_url = std::env::var("PUBLIC_URL").unwrap_or_default();
     let body = json!({ "agent": agent, "source_url": public_url });
 
-    match reqwest::Client::new()
+    match state.egress.peer_transfer()
         .post(format!("{}/transfer/receive", peer.url))
         .headers(headers)
         .json(&body)
-        .timeout(std::time::Duration::from_secs(15))
         .send().await
     {
         Ok(r) if r.status().is_success() => {

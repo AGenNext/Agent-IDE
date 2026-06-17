@@ -400,7 +400,7 @@ async fn run_loop(state: Arc<AppState>, req: RunRequest) {
     emit("thought", &format!("Starting task: {}", req.task));
     tracing::debug!(run_id = %req.run_id, model = %req.model, "run_loop started");
 
-    let client = reqwest::Client::new();
+    let client = state.egress.llm().clone();
     let mut history: Vec<Value> = vec![
         json!({ "role": "user", "content": req.task }),
     ];

@@ -219,12 +219,7 @@ pub async fn certify_with_ping(model: &str, state: &Arc<AppState>) -> ProviderCe
         return cert;
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build()
-        .unwrap_or_default();
-
-    let reachable = client.get(&url).send().await
+    let reachable = state.egress.probe().get(&url).send().await
         .map(|r| r.status().is_success() || r.status().as_u16() == 404)
         .unwrap_or(false);
 

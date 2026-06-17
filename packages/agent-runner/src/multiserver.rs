@@ -68,11 +68,7 @@ async fn run_cluster_announce(state: Arc<AppState>) {
                 "status": "online",
             });
 
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build().unwrap_or_default();
-
-            match client.post(&announce_url).json(&body).send().await {
+            match state.egress.probe().post(&announce_url).json(&body).send().await {
                 Ok(r) if r.status().is_success() =>
                     tracing::debug!(peer = %peer_id, "cluster: announce ok"),
                 Ok(r) =>

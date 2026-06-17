@@ -8,7 +8,6 @@
 // Freedom, not free. openautonomyx.com
 
 mod store;
-mod gate;
 mod gateway;
 mod configdb;
 mod marketplace;

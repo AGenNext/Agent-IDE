@@ -1,7 +1,20 @@
 // Tools layer — tool registry + parallel executor.
 // Each tool invocation is an independent async operation.
+// HTTP calls use a module-level shared client — one connection pool for all tool calls.
 
 use serde_json::Value;
+use std::sync::OnceLock;
+
+fn tool_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .user_agent(concat!("autonomyx-tools/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .expect("failed to build tool HTTP client")
+    })
+}
 
 pub async fn invoke(tool_id: &str, input: &Value) -> String {
     match tool_id {
@@ -18,7 +31,7 @@ async fn http_client(input: &Value) -> String {
         None    => return "http_client: missing url".into(),
     };
     let method = input["method"].as_str().unwrap_or("GET").to_uppercase();
-    let client = reqwest::Client::new();
+    let client = tool_client();
     let req = match method.as_str() {
         "POST" => client.post(&url).body(input["body"].to_string()),
         _      => client.get(&url),
@@ -34,8 +47,7 @@ async fn web_search(input: &Value) -> String {
     let key   = std::env::var("BRAVE_API_KEY").unwrap_or_default();
     if key.is_empty() { return format!("(demo) search results for: {query}"); }
     let url = format!("https://api.search.brave.com/res/v1/web/search?q={}", urlencoding::encode(query));
-    let client = reqwest::Client::new();
-    match client.get(&url).header("X-Subscription-Token", &key).send().await {
+    match tool_client().get(&url).header("X-Subscription-Token", &key).send().await {
         Ok(r)  => r.text().await.unwrap_or_default(),
         Err(e) => format!("web_search error: {e}"),
     }
