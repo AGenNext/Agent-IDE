@@ -24,17 +24,64 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use crate::store::AppState;
 use crate::fabric::FabricEvent;
 
-const RECONNECT_BASE_MS: u64 = 2_000;
-const RECONNECT_CAP_MS:  u64 = 64_000;
-const PEER_POLL_SECS:    u64 = 10;
+const RECONNECT_BASE_MS:  u64 = 2_000;
+const RECONNECT_CAP_MS:   u64 = 64_000;
+const PEER_POLL_SECS:     u64 = 10;
+const CLUSTER_ANNOUNCE_SECS: u64 = 30;  // auto-clustering: broadcast self to peers
 
-/// Start the multi-server bridge in the background.
+/// Start the multi-server bridge + auto-clustering in the background.
 /// Spawns one reconciler task that monitors the peer registry,
-/// and one per-peer bridge task for every online peer.
+/// one per-peer bridge task for every online peer,
+/// and one cluster-announce task that advertises this node to all peers.
 pub fn start(state: Arc<AppState>) {
-    tokio::spawn(async move {
-        run_bridge(state).await;
-    });
+    let s1 = state.clone();
+    tokio::spawn(async move { run_bridge(s1).await });
+
+    // Auto-clustering: periodically announce this node's existence to all peers
+    let s2 = state.clone();
+    tokio::spawn(async move { run_cluster_announce(s2).await });
+}
+
+/// Auto-clustering — broadcasts this node's URL + port to all registered peers.
+/// When peers receive the announce, they add this node to their peer registry
+/// and initiate a fabric bridge. No manual cluster config needed.
+async fn run_cluster_announce(state: Arc<AppState>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(CLUSTER_ANNOUNCE_SECS));
+    let self_url = std::env::var("AUTONOMYX_PUBLIC_URL")
+        .unwrap_or_else(|_| {
+            let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
+            format!("http://localhost:{port}")
+        });
+
+    loop {
+        tick.tick().await;
+        let peers: Vec<(String, String)> = state.peers.read().unwrap()
+            .values()
+            .map(|p| (p.id.clone(), p.url.clone()))
+            .collect();
+
+        for (peer_id, peer_url) in peers {
+            let announce_url = format!("{}/api/peers/announce", peer_url.trim_end_matches('/'));
+            let body = serde_json::json!({
+                "url":    self_url,
+                "name":   std::env::var("AUTONOMYX_NODE_NAME").unwrap_or_else(|_| "autonomyx-node".into()),
+                "status": "online",
+            });
+
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build().unwrap_or_default();
+
+            match client.post(&announce_url).json(&body).send().await {
+                Ok(r) if r.status().is_success() =>
+                    tracing::debug!(peer = %peer_id, "cluster: announce ok"),
+                Ok(r) =>
+                    tracing::debug!(peer = %peer_id, status = %r.status(), "cluster: announce non-2xx"),
+                Err(e) =>
+                    tracing::debug!(peer = %peer_id, error = %e, "cluster: announce failed (peer may be down)"),
+            }
+        }
+    }
 }
 
 async fn run_bridge(state: Arc<AppState>) {

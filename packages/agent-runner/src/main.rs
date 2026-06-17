@@ -46,6 +46,8 @@ mod optin_middleware;
 mod authmatic;
 mod arithmetic;
 mod multiserver;
+mod provider_cert;
+mod reconciler;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -59,6 +61,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use store::AppState;
+
+// ── Intelligent port assignment ───────────────────────────────────────────────
+// Scans a port range and returns the first port not already in use.
+// Enables multiple platform instances on the same host without config.
+fn find_free_port(start: u16, end: u16) -> Option<u16> {
+    for port in start..=end {
+        if std::net::TcpListener::bind(("0.0.0.0", port)).is_ok() {
+            return Some(port);
+        }
+    }
+    None
+}
 
 #[tokio::main]
 async fn main() {
@@ -75,9 +89,11 @@ async fn main() {
             .add_directive("tower_http=warn".parse().unwrap()))
         .init();
 
+    // ── Intelligent port assignment ───────────────────────────────────────────
+    // Priority: PORT env var → find first free port in preferred range → 3001
     let port: u16 = std::env::var("PORT")
         .ok().and_then(|v| v.parse().ok())
-        .unwrap_or(3001);
+        .unwrap_or_else(|| find_free_port(3001, 3099).unwrap_or(3001));
 
     // ── Production startup banner ─────────────────────────────────────────────
     let cloud_ctx = cloud::CloudContext::detect();
@@ -201,6 +217,8 @@ async fn main() {
         .nest("/api", routes::arithmetic::router(state.clone()))
         // Feedback gate — closes the loop, every run produces signal
         .nest("/api", routes::feedback::router(state.clone()))
+        // Provider certification — certified providers only
+        .nest("/api", routes::providers::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
         .layer(middleware::from_fn({
@@ -261,6 +279,10 @@ async fn main() {
     controller::start(state.clone());
     loop_coordinator::start(state.clone());
     multiserver::start(state.clone());
+    reconciler::start(state.clone());
+
+    // Immediate full rebase on startup — sync all surfaces to ground truth
+    reconciler::rebase_all(&state);
 
     // Log hardened attack surface at boot
     hardening::log_surface();

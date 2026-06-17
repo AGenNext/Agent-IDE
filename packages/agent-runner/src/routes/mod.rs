@@ -28,3 +28,4 @@ pub mod openapi;
 pub mod landing;
 pub mod authmatic;
 pub mod arithmetic;
+pub mod providers;

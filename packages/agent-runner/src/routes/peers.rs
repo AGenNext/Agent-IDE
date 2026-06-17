@@ -12,10 +12,32 @@ struct TransferBody { agent_id: String, peer_id: String }
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/peers",     get(list).post(add))
-        .route("/peers/:id", delete(remove))
-        .route("/transfer",  post(push_agent))
+        .route("/peers",              get(list).post(add))
+        .route("/peers/:id",          delete(remove))
+        .route("/peers/announce",     post(announce))   // auto-clustering inbound
+        .route("/transfer",           post(push_agent))
         .with_state(state)
+}
+
+/// POST /api/peers/announce — called by remote nodes in auto-cluster mode.
+/// Registers or updates the calling node in the peer registry.
+async fn announce(State(state): State<Arc<AppState>>, Json(b): Json<serde_json::Value>) -> Json<Value> {
+    let url    = b.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let name   = b.get("name").and_then(|v| v.as_str()).unwrap_or("remote-node").to_string();
+    let status = b.get("status").and_then(|v| v.as_str()).unwrap_or("online").to_string();
+    if url.is_empty() { return Json(json!({ "ok": false, "error": "url required" })); }
+
+    // Upsert peer — if URL already registered, just update status
+    let existing = state.list_peers().into_iter().find(|p| p.url == url);
+    if let Some(p) = existing {
+        state.set_peer_status(&p.id, &status);
+        Json(json!({ "ok": true, "peer_id": p.id, "action": "updated" }))
+    } else {
+        let peer = state.create_peer(&name, &url, None);
+        state.set_peer_status(&peer.id, &status);
+        tracing::info!(peer_id = %peer.id, url = %url, "cluster: new node announced — auto-joined");
+        Json(json!({ "ok": true, "peer_id": peer.id, "action": "joined" }))
+    }
 }
 
 async fn list(State(state): State<Arc<AppState>>) -> Json<Value> {

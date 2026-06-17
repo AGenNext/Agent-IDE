@@ -12,6 +12,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use crate::store::{AppState, RunStatus};
 use crate::providers;
+use crate::provider_cert;
 
 #[derive(Debug, Clone)]
 pub struct RunRequest {
@@ -31,17 +32,44 @@ You are a helpful Autonomyx agent. Think step by step.\
  When you have the final answer respond with: {\"result\": \"<answer>\"}.\
  Do not mix prose with JSON in the same response.";
 
-/// Spawn the ReAct loop as a Tokio task — non-blocking, fully parallel.
+/// Spawn the run as a Tokio task — non-blocking, fully parallel.
+/// Certified providers only: the cert gate runs before any work is dispatched.
 pub fn spawn_run(state: Arc<AppState>, req: RunRequest) {
     tokio::spawn(async move {
-        // Route to the right engine based on model prefix
+        // Equation/rule agents are self-contained — no external provider to certify.
         if req.model.starts_with("eq:") || req.model == "equation" {
             equation_run(state, req).await;
-        } else if req.model.starts_with("rule:") {
-            rule_run(state, req).await;
-        } else {
-            run_loop(state, req).await;
+            return;
         }
+        if req.model.starts_with("rule:") {
+            rule_run(state, req).await;
+            return;
+        }
+
+        // ── Provider certification gate ───────────────────────────────────────
+        // Certified providers only. Run is rejected immediately if cert fails.
+        let cert = provider_cert::certify(&req.model, &state);
+        if !cert.is_ok() {
+            let reason = cert.reject_reason.as_deref().unwrap_or("certification failed");
+            state.add_run_step(&req.run_id, "cert_fail",
+                &format!("provider not certified — {reason}"));
+            let msg = json!({
+                "type":    "cert_fail",
+                "content": reason,
+                "cert":    serde_json::to_value(&cert).unwrap_or_default(),
+                "runId":   &req.run_id,
+            }).to_string();
+            state.broadcast_to_run(&req.run_id, &msg);
+            state.finish_run(&req.run_id, RunStatus::Failed);
+            return;
+        }
+
+        // Attach cert metadata to first step so the run record is traceable
+        state.add_run_step(&req.run_id, "cert_ok",
+            &format!("provider certified: {} (trust={:.2}, cert={})",
+                cert.provider_id, cert.trust_score, cert.cert_id));
+
+        run_loop(state, req).await;
     });
 }
 

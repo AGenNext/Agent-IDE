@@ -572,6 +572,101 @@ pub fn builtin_plugins() -> Vec<PluginDescriptor> {
             ],
             data_sources: vec!["turso_databases".into(), "turso_usage".into()],
         },
+        // ── Distribution + P2P ───────────────────────────────────────────────
+        PluginDescriptor {
+            id:           "plugin_flyio".into(),
+            name:         "Fly.io".into(),
+            version:      "2.x".into(),
+            description:  "Global agent distribution — build at desk, distribute through cloud. Deploy Autonomyx replicas to 35+ regions in one command. Built-in Anycast routing, low-latency P2P via WireGuard mesh. Global distribution with sub-50ms latency.".into(),
+            author:       "Fly.io".into(),
+            kind:         PluginKind::Tool,
+            capabilities: vec![
+                "deploy:global".into(), "network:anycast".into(), "network:wireguard".into(),
+                "peer:allowed".into(), "latency:low".into(), "region:multi".into(),
+                "distribute:edge".into(), "build:local_deploy_cloud".into(),
+            ],
+            config_keys:  vec!["FLY_API_TOKEN".into(), "FLY_APP_NAME".into()],
+            enabled:      std::env::var("FLY_API_TOKEN").is_ok(),
+            loaded:       false,
+            homepage:     Some("https://fly.io".into()),
+            nodes: vec![
+                PluginNode {
+                    id:           "tool:fly:deploy".into(),
+                    label:        "Fly Deploy".into(),
+                    kind:         "tool".into(),
+                    capabilities: vec!["deploy:global".into(), "distribute:edge".into()],
+                    edges_to:     vec!["agent:deploy".into(), "agent:observe".into()],
+                    capability_required: "deploy:global".into(),
+                },
+                PluginNode {
+                    id:           "tool:fly:mesh".into(),
+                    label:        "Fly WireGuard Mesh".into(),
+                    kind:         "tool".into(),
+                    capabilities: vec!["network:wireguard".into(), "peer:allowed".into()],
+                    edges_to:     vec!["sink:stream".into(), "agent:observe".into()],
+                    capability_required: "peer:allowed".into(),
+                },
+            ],
+            data_sources: vec!["fly_machines".into(), "fly_metrics".into()],
+        },
+        PluginDescriptor {
+            id:           "plugin_libp2p".into(),
+            name:         "libp2p".into(),
+            version:      "0.54".into(),
+            description:  "Peer-to-peer networking — direct agent-to-agent connections without servers. Kademlia DHT for peer discovery, QUIC transport, circuit relay, hole punching. Peer-to-peer allowed by design.".into(),
+            author:       "libp2p contributors".into(),
+            kind:         PluginKind::Connector,
+            capabilities: vec![
+                "peer:p2p".into(), "peer:direct".into(), "transport:quic".into(),
+                "discovery:dht".into(), "relay:circuit".into(), "nat:hole_punch".into(),
+                "peer:allowed".into(),
+            ],
+            config_keys:  vec!["LIBP2P_LISTEN_ADDR".into(), "LIBP2P_BOOTSTRAP_PEERS".into()],
+            enabled:      std::env::var("LIBP2P_LISTEN_ADDR").is_ok(),
+            loaded:       false,
+            homepage:     Some("https://libp2p.io".into()),
+            nodes: vec![
+                PluginNode {
+                    id:           "connector:libp2p".into(),
+                    label:        "libp2p P2P".into(),
+                    kind:         "api".into(),
+                    capabilities: vec!["peer:p2p".into(), "peer:direct".into()],
+                    edges_to:     vec!["agent:run".into(), "sink:stream".into()],
+                    capability_required: "peer:p2p".into(),
+                },
+            ],
+            data_sources: vec!["libp2p_peers".into()],
+        },
+        // ── Decision intelligence ─────────────────────────────────────────────
+        PluginDescriptor {
+            id:           "plugin_decision_engine".into(),
+            name:         "Decision Intelligence Engine".into(),
+            version:      "1.0".into(),
+            description:  "Built-in decision intelligence — rule trees, equation agents, confidence scoring, multi-criteria decision analysis (MCDA). Runs inside the platform at zero cost. No LLM required for decisions.".into(),
+            author:       "Autonomyx".into(),
+            kind:         PluginKind::ComputeProvider,
+            capabilities: vec![
+                "decision:rule_tree".into(), "decision:equation".into(),
+                "decision:mcda".into(), "decision:confidence".into(),
+                "agent:equation".into(), "agent:rule".into(),
+                "intelligence:deterministic".into(),
+            ],
+            config_keys:  vec![],   // built-in, no config required
+            enabled:      true,     // always enabled — built into agent runtime
+            loaded:       true,
+            homepage:     Some("https://openautonomyx.com".into()),
+            nodes: vec![
+                PluginNode {
+                    id:           "compute:decision_engine".into(),
+                    label:        "Decision Intelligence".into(),
+                    kind:         "tool".into(),
+                    capabilities: vec!["decision:rule_tree".into(), "decision:equation".into(), "intelligence:deterministic".into()],
+                    edges_to:     vec!["agent:plan".into(), "agent:run".into(), "agent:observe".into()],
+                    capability_required: "decision:equation".into(),
+                },
+            ],
+            data_sources: vec!["decision_log".into()],
+        },
     ]
 }
 
