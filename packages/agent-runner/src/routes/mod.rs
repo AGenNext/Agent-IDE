@@ -30,3 +30,5 @@ pub mod authmatic;
 pub mod arithmetic;
 pub mod providers;
 pub mod megaverse;
+pub mod teams;
+pub mod cncf;

@@ -3,10 +3,11 @@
 // Each run is an isolated Tokio task; state is shared via AppState.
 //
 // Model modes:
-//   "eq:<expr>"   — equation agent: evaluates an arithmetic expression; no LLM call.
-//                   Scales to 10,000+ concurrent agents at near-zero cost.
-//   "rule:<json>" — rule agent: evaluates a JSON rule tree; no LLM call.
-//   anything else — LLM agent: ReAct loop via configured provider.
+//   "eq:<expr>"        — equation agent: arithmetic expression; no LLM. 10k+ concurrent.
+//   "rule:<json>"      — rule agent: JSON decision tree; no LLM.
+//   "unicode:<op>"     — unicode agent: text analysis, script detection, normalization; no LLM.
+//                        ops: info | scripts | graphemes | fold | normalize | words | bytes
+//   anything else      — LLM agent: ReAct loop via configured provider.
 
 use std::sync::Arc;
 use serde_json::{json, Value};
@@ -43,6 +44,10 @@ pub fn spawn_run(state: Arc<AppState>, req: RunRequest) {
         }
         if req.model.starts_with("rule:") {
             rule_run(state, req).await;
+            return;
+        }
+        if req.model.starts_with("unicode:") || req.model == "unicode" {
+            unicode_run(state, req).await;
             return;
         }
 
@@ -165,6 +170,220 @@ fn eval_rule(rule: &Value, vars: &std::collections::HashMap<String, f64>) -> Str
     } else {
         rule.as_str().unwrap_or(&rule.to_string()).to_string()
     }
+}
+
+// ── Unicode agent — text intelligence, no LLM ────────────────────────────────
+//
+// model = "unicode:<op>"   e.g. "unicode:scripts", "unicode:info"
+// model = "unicode"        + task contains the text to analyse
+//
+// Operations (op):
+//   info       — full Unicode profile of the text
+//   scripts    — which Unicode scripts are present and their distribution
+//   graphemes  — count code points, chars, words, bytes; identify non-ASCII ranges
+//   fold       — case-fold to lowercase (Unicode-aware via char::to_lowercase)
+//   normalize  — trim whitespace, collapse runs, remove control characters
+//   words      — word frequency map (whitespace-split, case-folded)
+//   bytes      — UTF-8 byte distribution and encoding info
+//
+// Enables multilingual agents, internationalization pipelines, and text routing
+// without any LLM call. Scales to 10k+ concurrent agents at microsecond latency.
+
+async fn unicode_run(state: Arc<AppState>, req: RunRequest) {
+    let emit = |step_type: &str, content: &str| {
+        state.add_run_step(&req.run_id, step_type, content);
+        let msg = json!({ "type": step_type, "content": content, "runId": &req.run_id }).to_string();
+        state.broadcast_to_run(&req.run_id, &msg);
+    };
+
+    let (op, text) = if req.model.starts_with("unicode:") {
+        (req.model["unicode:".len()..].to_string(), req.task.clone())
+    } else {
+        // "unicode" model — first word of task is op, rest is text
+        let mut parts = req.task.splitn(2, ' ');
+        let op  = parts.next().unwrap_or("info").to_string();
+        let txt = parts.next().unwrap_or("").to_string();
+        (op, txt)
+    };
+
+    emit("thought", &format!("unicode agent: op={op} text_len={}", text.chars().count()));
+
+    let result = unicode_op(&op, &text);
+    emit("result", &serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()));
+    state.finish_run(&req.run_id, RunStatus::Completed);
+}
+
+fn unicode_op(op: &str, text: &str) -> Value {
+    match op {
+        "scripts" => {
+            let mut script_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for ch in text.chars() {
+                let script = unicode_script_name(ch);
+                *script_counts.entry(script).or_insert(0) += 1;
+            }
+            json!({
+                "op":          "scripts",
+                "total_chars": text.chars().count(),
+                "scripts":     script_counts,
+            })
+        }
+        "fold" => {
+            let folded: String = text.chars().flat_map(|c| c.to_lowercase()).collect();
+            json!({ "op": "fold", "result": folded, "changed": folded != text })
+        }
+        "normalize" => {
+            // trim, collapse whitespace runs, strip ASCII control chars
+            let normalized: String = text.chars()
+                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                .collect::<String>()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            json!({ "op": "normalize", "result": normalized, "original_len": text.len(), "result_len": normalized.len() })
+        }
+        "words" => {
+            let mut freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            for word in text.split_whitespace() {
+                let folded: String = word.chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .flat_map(|c| c.to_lowercase())
+                    .collect();
+                if !folded.is_empty() { *freq.entry(folded).or_insert(0) += 1; }
+            }
+            let total = freq.values().sum::<usize>();
+            let mut sorted: Vec<_> = freq.into_iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            sorted.truncate(50);
+            json!({ "op": "words", "unique_words": sorted.len(), "total_words": total, "top": sorted })
+        }
+        "bytes" => {
+            let bytes = text.as_bytes().len();
+            let chars = text.chars().count();
+            let ascii  = text.chars().filter(|c| c.is_ascii()).count();
+            let non_ascii = chars - ascii;
+            json!({
+                "op":           "bytes",
+                "utf8_bytes":   bytes,
+                "code_points":  chars,
+                "ascii_chars":  ascii,
+                "non_ascii":    non_ascii,
+                "avg_bytes_per_char": if chars > 0 { bytes as f64 / chars as f64 } else { 0.0 },
+            })
+        }
+        "graphemes" | "info" | _ => {
+            let chars    = text.chars().count();
+            let bytes    = text.as_bytes().len();
+            let words    = text.split_whitespace().count();
+            let lines    = text.lines().count();
+            let ascii    = text.chars().filter(|c| c.is_ascii()).count();
+            let emoji    = text.chars().filter(|c| is_emoji(*c)).count();
+            let numeric  = text.chars().filter(|c| c.is_numeric()).count();
+            let alpha    = text.chars().filter(|c| c.is_alphabetic()).count();
+            let mut scripts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for ch in text.chars() {
+                *scripts.entry(unicode_script_name(ch)).or_insert(0) += 1;
+            }
+            json!({
+                "op":          "info",
+                "code_points": chars,
+                "utf8_bytes":  bytes,
+                "words":       words,
+                "lines":       lines,
+                "ascii_chars": ascii,
+                "non_ascii":   chars - ascii,
+                "alphabetic":  alpha,
+                "numeric":     numeric,
+                "emoji":       emoji,
+                "scripts":     scripts,
+                "is_ascii_only": ascii == chars,
+                "bom_present": text.starts_with('\u{FEFF}'),
+            })
+        }
+    }
+}
+
+fn unicode_script_name(c: char) -> &'static str {
+    let cp = c as u32;
+    match cp {
+        0x0000..=0x007F => "Latin/ASCII",
+        0x0080..=0x00FF => "Latin Extended",
+        0x0100..=0x024F => "Latin Extended-A/B",
+        0x0370..=0x03FF => "Greek",
+        0x0400..=0x04FF => "Cyrillic",
+        0x0500..=0x052F => "Cyrillic Supplement",
+        0x0590..=0x05FF => "Hebrew",
+        0x0600..=0x06FF => "Arabic",
+        0x0700..=0x074F => "Syriac",
+        0x0900..=0x097F => "Devanagari",
+        0x0980..=0x09FF => "Bengali",
+        0x0A00..=0x0A7F => "Gurmukhi",
+        0x0A80..=0x0AFF => "Gujarati",
+        0x0B00..=0x0B7F => "Oriya",
+        0x0B80..=0x0BFF => "Tamil",
+        0x0C00..=0x0C7F => "Telugu",
+        0x0C80..=0x0CFF => "Kannada",
+        0x0D00..=0x0D7F => "Malayalam",
+        0x0E00..=0x0E7F => "Thai",
+        0x0E80..=0x0EFF => "Lao",
+        0x0F00..=0x0FFF => "Tibetan",
+        0x1000..=0x109F => "Myanmar",
+        0x10A0..=0x10FF => "Georgian",
+        0x1100..=0x11FF => "Hangul Jamo",
+        0x1E00..=0x1EFF => "Latin Extended Additional",
+        0x1F00..=0x1FFF => "Greek Extended",
+        0x2000..=0x206F => "General Punctuation",
+        0x2070..=0x209F => "Superscripts/Subscripts",
+        0x20A0..=0x20CF => "Currency Symbols",
+        0x2100..=0x214F => "Letterlike Symbols",
+        0x2190..=0x21FF => "Arrows",
+        0x2200..=0x22FF => "Mathematical Operators",
+        0x2600..=0x26FF => "Miscellaneous Symbols",
+        0x2700..=0x27BF => "Dingbats",
+        0x3000..=0x303F => "CJK Symbols/Punctuation",
+        0x3040..=0x309F => "Hiragana",
+        0x30A0..=0x30FF => "Katakana",
+        0x3100..=0x312F => "Bopomofo",
+        0x3130..=0x318F => "Hangul Compatibility",
+        0x3400..=0x4DBF => "CJK Ext-A",
+        0x4E00..=0x9FFF => "CJK Unified",
+        0xA000..=0xA48F => "Yi",
+        0xAC00..=0xD7AF => "Hangul Syllables",
+        0xF900..=0xFAFF => "CJK Compatibility",
+        0xFB00..=0xFB4F => "Alphabetic Presentation",
+        0xFB50..=0xFDFF => "Arabic Presentation-A",
+        0xFE30..=0xFE4F => "CJK Compatibility Forms",
+        0xFE70..=0xFEFF => "Arabic Presentation-B",
+        0xFF00..=0xFFEF => "Halfwidth/Fullwidth",
+        0x1F300..=0x1F5FF => "Emoji/Symbols",
+        0x1F600..=0x1F64F => "Emoji Faces",
+        0x1F680..=0x1F6FF => "Transport Emoji",
+        0x1F700..=0x1F77F => "Alchemical Symbols",
+        0x1F900..=0x1F9FF => "Supplemental Symbols",
+        0x20000..=0x2A6DF => "CJK Ext-B",
+        _ => "Other",
+    }
+}
+
+fn is_emoji(c: char) -> bool {
+    let cp = c as u32;
+    matches!(cp,
+        0x1F300..=0x1F9FF | 0x2600..=0x27BF |
+        0x1F000..=0x1F02F | 0x1F0A0..=0x1F0FF |
+        0x1FA00..=0x1FA9F | 0x231A..=0x231B |
+        0x23E9..=0x23F3  | 0x25AA..=0x25AB |
+        0x25B6 | 0x25C0  | 0x25FB..=0x25FE |
+        0x2614..=0x2615  | 0x2648..=0x2653 |
+        0x267F | 0x2693  | 0x26A1 | 0x26AA..=0x26AB |
+        0x26BD..=0x26BE  | 0x26C4..=0x26C5 |
+        0x26CE | 0x26D4  | 0x26EA | 0x26F2..=0x26F3 |
+        0x26F5 | 0x26FA  | 0x26FD | 0x2702 |
+        0x2705 | 0x2708..=0x270D | 0x270F | 0x2712 |
+        0x2714 | 0x2716  | 0x271D | 0x2721 |
+        0x2728 | 0x2733..=0x2734 | 0x2744 | 0x2747 |
+        0x274C | 0x274E  | 0x2753..=0x2755 | 0x2757 |
+        0x2763..=0x2764  | 0x2795..=0x2797 | 0x27A1 |
+        0x27B0 | 0x27BF  | 0x2934..=0x2935
+    )
 }
 
 async fn run_loop(state: Arc<AppState>, req: RunRequest) {

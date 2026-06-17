@@ -85,10 +85,15 @@ async fn run_cluster_announce(state: Arc<AppState>) {
 }
 
 async fn run_bridge(state: Arc<AppState>) {
-    // Track which peers we're already bridging so we don't double-spawn.
-    let mut bridged: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Track live bridge tasks by peer ID.
+    // JoinHandle lets us detect finished (dead) tasks and respawn them.
+    let mut bridges: std::collections::HashMap<String, tokio::task::JoinHandle<()>> =
+        std::collections::HashMap::new();
 
     loop {
+        // Prune finished handles — dead connections are respawnable
+        bridges.retain(|_, handle| !handle.is_finished());
+
         let peers = state.peers.read().unwrap()
             .values()
             .filter(|p| p.status == "online" || p.status == "connected")
@@ -96,18 +101,17 @@ async fn run_bridge(state: Arc<AppState>) {
             .collect::<Vec<_>>();
 
         for (id, url) in peers {
-            if bridged.contains(&id) { continue; }
+            if bridges.contains_key(&id) { continue; }
 
-            // Convert HTTP(S) peer URL → WebSocket URL for /ws/fabric
             let ws_url = peer_ws_url(&url);
             if ws_url.is_empty() { continue; }
 
-            bridged.insert(id.clone());
-            let state2 = state.clone();
+            let state2  = state.clone();
             let peer_id = id.clone();
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 bridge_peer(peer_id, ws_url, state2).await;
             });
+            bridges.insert(id, handle);
         }
 
         sleep(Duration::from_secs(PEER_POLL_SECS)).await;

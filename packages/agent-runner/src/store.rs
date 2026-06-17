@@ -18,6 +18,7 @@ use crate::plugin::PluginRegistry;
 use crate::optin::OptInRegistry;
 use crate::authmatic::AuthMatic;
 use crate::megaverse::Megaverse;
+use crate::teams::TeamRegistry;
 
 // ── Agent identity ────────────────────────────────────────────────────────────
 
@@ -145,6 +146,8 @@ pub struct AppState {
     pub authmatic: AuthMatic,
     // Megaverse — unified world model: every entity, every relationship, every surface
     pub megaverse: Arc<Megaverse>,
+    // Teams — institutional agent teams: cross-sector, unicode-native, federation-aware
+    pub teams: TeamRegistry,
 }
 
 impl AppState {
@@ -186,6 +189,7 @@ impl AppState {
             optin:       OptInRegistry::new(),
             authmatic:   AuthMatic::new(),
             megaverse:   Arc::new(Megaverse::new()),
+            teams:       TeamRegistry::new(),
         }
     }
 
@@ -303,6 +307,13 @@ impl AppState {
             region: region.map(|r| r.into()),
         };
         self.peers.write().unwrap().insert(id, peer.clone());
+        self.fabric.emit(
+            crate::fabric::FabricEvent::open(
+                &format!("peer:{}", peer.id),
+                crate::lifecycle::Stage::Build,
+                serde_json::json!({ "action": "registered", "name": name, "url": url, "region": region }),
+            ).with_entities([format!("peer:{}", peer.id)])
+        );
         peer
     }
 
@@ -315,13 +326,36 @@ impl AppState {
     }
 
     pub fn remove_peer(&self, id: &str) -> bool {
-        self.peers.write().unwrap().remove(id).is_some()
+        let removed = self.peers.write().unwrap().remove(id).is_some();
+        if removed {
+            self.fabric.emit(
+                crate::fabric::FabricEvent::open(
+                    &format!("peer:{id}"),
+                    crate::lifecycle::Stage::Observe,
+                    serde_json::json!({ "action": "removed" }),
+                ).with_entities([format!("peer:{id}")])
+            );
+        }
+        removed
     }
 
     pub fn set_peer_status(&self, id: &str, status: &str) {
-        if let Some(p) = self.peers.write().unwrap().get_mut(id) {
-            p.status = status.into();
-            if status == "online" { p.last_seen = Some(Utc::now()); }
+        let found = {
+            let mut peers = self.peers.write().unwrap();
+            if let Some(p) = peers.get_mut(id) {
+                p.status = status.into();
+                if status == "online" { p.last_seen = Some(Utc::now()); }
+                true
+            } else { false }
+        };
+        if found {
+            self.fabric.emit(
+                crate::fabric::FabricEvent::open(
+                    &format!("peer:{id}"),
+                    crate::lifecycle::Stage::Observe,
+                    serde_json::json!({ "action": "status_changed", "status": status }),
+                ).with_entities([format!("peer:{id}")])
+            );
         }
     }
 
@@ -337,6 +371,13 @@ impl AppState {
             created_at: Utc::now(), updated_at: Utc::now(),
         };
         self.apps.write().unwrap().insert(id, app.clone());
+        self.fabric.emit(
+            crate::fabric::FabricEvent::open(
+                &format!("app:{}", app.id),
+                crate::lifecycle::Stage::Build,
+                serde_json::json!({ "action": "created", "name": name, "owner": owner_id, "version": version }),
+            ).with_entities([format!("app:{}", app.id), format!("owner:{owner_id}")])
+        );
         app
     }
 
@@ -349,21 +390,45 @@ impl AppState {
     }
 
     pub fn activate_app(&self, id: &str, did: &str) {
-        let mut apps = self.apps.write().unwrap();
-        if let Some(app) = apps.get_mut(id) {
-            app.did = Some(did.into());
-            app.status = AppStatus::Live;
-            app.updated_at = Utc::now();
+        let found = {
+            let mut apps = self.apps.write().unwrap();
+            if let Some(app) = apps.get_mut(id) {
+                app.did = Some(did.into());
+                app.status = AppStatus::Live;
+                app.updated_at = Utc::now();
+                true
+            } else { false }
+        };
+        if found {
+            self.fabric.emit(
+                crate::fabric::FabricEvent::open(
+                    &format!("app:{id}"),
+                    crate::lifecycle::Stage::Deploy,
+                    serde_json::json!({ "action": "activated", "did": did }),
+                ).with_entities([format!("app:{id}")])
+            );
         }
     }
 
     pub fn bind_agent_to_app(&self, app_id: &str, agent_id: &str) {
-        let mut apps = self.apps.write().unwrap();
-        if let Some(app) = apps.get_mut(app_id) {
-            if !app.agents.contains(&agent_id.to_string()) {
-                app.agents.push(agent_id.into());
-                app.updated_at = Utc::now();
-            }
+        let found = {
+            let mut apps = self.apps.write().unwrap();
+            if let Some(app) = apps.get_mut(app_id) {
+                if !app.agents.contains(&agent_id.to_string()) {
+                    app.agents.push(agent_id.into());
+                    app.updated_at = Utc::now();
+                }
+                true
+            } else { false }
+        };
+        if found {
+            self.fabric.emit(
+                crate::fabric::FabricEvent::open(
+                    &format!("app:{app_id}"),
+                    crate::lifecycle::Stage::Build,
+                    serde_json::json!({ "action": "agent_bound", "agent_id": agent_id }),
+                ).with_entities([format!("app:{app_id}"), format!("agent:{agent_id}")])
+            );
         }
     }
 }
