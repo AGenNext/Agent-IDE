@@ -283,6 +283,7 @@ async fn main() {
     loop_coordinator::start(state.clone());
     multiserver::start(state.clone());
     reconciler::start(state.clone());
+    megaverse::start_live(state.clone()); // megaverse updates instantly via fabric
 
     // Immediate full rebase on startup — sync all surfaces to ground truth
     reconciler::rebase_all(&state);

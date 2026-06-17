@@ -182,6 +182,7 @@ async fn align_goal(
                     "score": check.score(),
                 }),
                 emitted_at: chrono::Utc::now(),
+                ..crate::fabric::FabricEvent::default()
             });
             Json(json!({
                 "goal_id":   id,
@@ -287,6 +288,7 @@ async fn record_impact(
                         "message": "Goal achieved. The world is better. The loop closes and begins again.",
                     }),
                     emitted_at: chrono::Utc::now(),
+                    ..crate::fabric::FabricEvent::default()
                 });
             }
 

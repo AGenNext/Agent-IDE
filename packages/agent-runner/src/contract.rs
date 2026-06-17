@@ -188,6 +188,7 @@ pub async fn contract_layer(
                 status:     crate::fabric::FabricStatus::Open,
                 payload:    event,
                 emitted_at: chrono::Utc::now(),
+                ..crate::fabric::FabricEvent::default()
             });
 
             // Pass to handler — contract satisfied
@@ -227,6 +228,7 @@ pub async fn contract_layer(
                 status:     crate::fabric::FabricStatus::Closed,
                 payload:    dead_letter,
                 emitted_at: chrono::Utc::now(),
+                ..crate::fabric::FabricEvent::default()
             });
 
             (

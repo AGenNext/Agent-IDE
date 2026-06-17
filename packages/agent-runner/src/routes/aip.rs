@@ -173,6 +173,7 @@ async fn receive_message(
             "payload":  msg.payload,
         }),
         emitted_at: Utc::now(),
+        ..crate::fabric::FabricEvent::default()
     });
 
     // Record in accountability log
@@ -298,6 +299,7 @@ async fn handle_event_push(state: &Arc<AppState>, msg: &AipMessage) -> Value {
         status:     crate::fabric::FabricStatus::Open,
         payload:    msg.payload.clone(),
         emitted_at: Utc::now(),
+        ..crate::fabric::FabricEvent::default()
     });
     json!({ "status": "event_received", "delivered_to_fabric": true })
 }

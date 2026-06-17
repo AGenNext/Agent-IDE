@@ -264,6 +264,7 @@ async fn consent(
                 status:     crate::fabric::FabricStatus::Open,
                 payload,
                 emitted_at: chrono::Utc::now(),
+                ..crate::fabric::FabricEvent::default()
             });
             Json(json!({
                 "app_id":   id,
@@ -288,6 +289,7 @@ async fn consent(
                 status:     crate::fabric::FabricStatus::Closed,
                 payload,
                 emitted_at: chrono::Utc::now(),
+                ..crate::fabric::FabricEvent::default()
             });
             Json(json!({
                 "app_id":   id,

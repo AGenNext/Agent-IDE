@@ -113,6 +113,7 @@ async fn spawn_job(
             "phase":      job.phase,
         }),
         emitted_at: chrono::Utc::now(),
+        ..crate::fabric::FabricEvent::default()
     });
 
     Json(json!({

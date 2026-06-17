@@ -242,6 +242,105 @@ impl Megaverse {
 
 use std::sync::Arc;
 use crate::store::AppState;
+use crate::fabric::FabricEvent;
+
+/// Start the live megaverse fabric listener.
+/// Subscribes to the fabric broadcast channel.
+/// On every fabric event, re-indexes the touched entities into the megaverse.
+/// No polling — the megaverse updates the instant the fabric moves.
+pub fn start_live(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut rx = state.fabric.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(raw) => {
+                    if let Ok(ev) = serde_json::from_str::<FabricEvent>(&raw) {
+                        // Update the artifact node in the megaverse
+                        on_fabric_event(&state.megaverse, &state, &ev);
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(missed = n, "megaverse: fabric lagged — partial live update");
+                    // Full reindex to catch up
+                    index(&state.megaverse, &state);
+                }
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+/// Process a single fabric event — update affected megaverse nodes immediately.
+fn on_fabric_event(mv: &Arc<Megaverse>, state: &Arc<AppState>, ev: &FabricEvent) {
+    // Update the primary artifact node
+    update_node_from_event(mv, state, &ev.artifact);
+
+    // Update all tagged entities
+    for entity_id in &ev.entities {
+        update_node_from_event(mv, state, entity_id);
+    }
+}
+
+/// Refresh a single node in the megaverse from current platform state.
+fn update_node_from_event(mv: &Arc<Megaverse>, state: &Arc<AppState>, id: &str) {
+    // Determine entity kind from ID prefix convention
+    if id.starts_with("agent:") || id.starts_with("agent_") {
+        let agent_id = id.trim_start_matches("agent:").trim_start_matches("agent_");
+        if let Some(a) = state.agents.read().unwrap().get(agent_id).cloned() {
+            mv.upsert(MegaverseNode {
+                id:         format!("agent:{}", a.id),
+                kind:       NodeKind::Agent,
+                label:      a.name.clone(),
+                status:     a.status.clone(),
+                trust:      0.8,
+                region:     None,
+                did:        None,
+                tags:       a.capabilities.clone(),
+                meta:       serde_json::json!({ "model": a.model }),
+                created_at: a.created_at,
+                updated_at: Utc::now(),
+                source:     "local".into(),
+            });
+        }
+    } else if id.starts_with("run:") {
+        let run_id = id.trim_start_matches("run:");
+        if let Some(r) = state.runs.read().unwrap().get(run_id).cloned() {
+            mv.upsert(MegaverseNode {
+                id:         format!("run:{}", r.run_id),
+                kind:       NodeKind::Run,
+                label:      format!("{} / {}", r.agent_name, r.task.chars().take(40).collect::<String>()),
+                status:     format!("{:?}", r.status).to_lowercase(),
+                trust:      if matches!(r.status, crate::store::RunStatus::Completed) { 1.0 } else { 0.5 },
+                region:     None,
+                did:        None,
+                tags:       vec![r.model.clone()],
+                meta:       serde_json::json!({ "steps": r.steps.len() }),
+                created_at: r.started_at,
+                updated_at: Utc::now(),
+                source:     "local".into(),
+            });
+        }
+    } else if id.starts_with("peer:") {
+        let peer_id = id.trim_start_matches("peer:");
+        if let Some(p) = state.peers.read().unwrap().get(peer_id).cloned() {
+            mv.upsert(MegaverseNode {
+                id:         format!("peer:{}", p.id),
+                kind:       NodeKind::Peer,
+                label:      p.name.clone(),
+                status:     p.status.clone(),
+                trust:      if p.status == "online" { 0.9 } else { 0.2 },
+                region:     p.region.clone(),
+                did:        None,
+                tags:       vec!["federation".into()],
+                meta:       serde_json::json!({ "url": p.url }),
+                created_at: p.last_seen.unwrap_or_else(Utc::now),
+                updated_at: Utc::now(),
+                source:     "local".into(),
+            });
+        }
+    }
+    // For other kinds (reconciler, plugin, goal etc.) the next full index() will catch them
+}
 
 pub fn index(mv: &Arc<Megaverse>, state: &Arc<AppState>) {
     // Agents

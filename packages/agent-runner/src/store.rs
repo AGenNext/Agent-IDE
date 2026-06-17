@@ -199,6 +199,14 @@ impl AppState {
             created_at: Utc::now(), updated_at: Utc::now(),
         };
         self.agents.write().unwrap().insert(id, agent.clone());
+        // Thread: emit fabric event so the megaverse live-updates and thread is woven
+        self.fabric.emit(
+            crate::fabric::FabricEvent::open(
+                &format!("agent:{}", agent.id),
+                crate::lifecycle::Stage::Build,
+                serde_json::json!({ "action": "created", "name": name, "owner": owner_id }),
+            ).with_entities([format!("agent:{}", agent.id), format!("owner:{owner_id}")])
+        );
         agent
     }
 
@@ -219,6 +227,17 @@ impl AppState {
             steps: vec![], started_at: Utc::now(), completed_at: None,
         };
         self.runs.write().unwrap().insert(run_id, run.clone());
+        // Thread: weave run into fabric so megaverse and subscribers see it immediately
+        self.fabric.emit(
+            crate::fabric::FabricEvent::open(
+                &format!("run:{}", run.run_id),
+                crate::lifecycle::Stage::Run,
+                serde_json::json!({ "action": "started", "agent": agent_id, "model": model }),
+            ).with_entities([
+                format!("run:{}", run.run_id),
+                format!("agent:{agent_id}"),
+            ])
+        );
         run
     }
 
@@ -244,11 +263,24 @@ impl AppState {
     }
 
     pub fn finish_run(&self, run_id: &str, status: RunStatus) {
-        let mut runs = self.runs.write().unwrap();
-        if let Some(run) = runs.get_mut(run_id) {
-            run.status = status;
-            run.completed_at = Some(Utc::now());
-        }
+        let agent_id = {
+            let mut runs = self.runs.write().unwrap();
+            if let Some(run) = runs.get_mut(run_id) {
+                run.status = status.clone();
+                run.completed_at = Some(Utc::now());
+                run.agent_id.clone()
+            } else { return; }
+        };
+        // Thread: weave completion into fabric
+        let stage = if status == RunStatus::Completed { crate::lifecycle::Stage::Feedback }
+                    else { crate::lifecycle::Stage::Observe };
+        self.fabric.emit(
+            crate::fabric::FabricEvent::open(
+                &format!("run:{run_id}"),
+                stage,
+                serde_json::json!({ "action": "finished", "status": format!("{:?}", status) }),
+            ).with_entities([format!("run:{run_id}"), format!("agent:{agent_id}")])
+        );
     }
 
     pub fn register_ws_sink(&self, run_id: &str, tx: tokio::sync::broadcast::Sender<String>) {

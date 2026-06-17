@@ -44,6 +44,13 @@ pub struct FabricEvent {
     pub status:     FabricStatus,
     pub payload:    serde_json::Value,
     pub emitted_at: DateTime<Utc>,
+    // Thread tags: every entity this event touches.
+    // Pull the thread for any entity with fabric.thread(entity_id).
+    #[serde(default)]
+    pub entities:   Vec<String>,
+    // Source node: which cluster member emitted this event (empty = local)
+    #[serde(default)]
+    pub source:     String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -57,14 +64,27 @@ pub enum FabricStatus {
 impl FabricEvent {
     pub fn open(artifact: &str, stage: Stage, payload: serde_json::Value) -> Self {
         Self { id: Uuid::new_v4().to_string(), artifact: artifact.into(), stage,
-               status: FabricStatus::Open, payload, emitted_at: Utc::now() }
+               status: FabricStatus::Open, payload, emitted_at: Utc::now(),
+               entities: vec![], source: String::new() }
     }
 
     pub fn closed(artifact: &str, stage: Stage, reason: &str) -> Self {
         Self { id: Uuid::new_v4().to_string(), artifact: artifact.into(), stage,
                status: FabricStatus::Closed,
                payload: serde_json::json!({ "reason": reason }),
-               emitted_at: Utc::now() }
+               emitted_at: Utc::now(), entities: vec![], source: String::new() }
+    }
+
+    /// Tag this event with entity IDs — these entities are part of this thread.
+    pub fn with_entities(mut self, entities: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.entities = entities.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Tag with the emitting source node URL.
+    pub fn from_source(mut self, source: impl Into<String>) -> Self {
+        self.source = source.into();
+        self
     }
 
     /// Stage to trigger next, if this event is Open.
@@ -307,12 +327,63 @@ impl Fabric {
             .collect()
     }
 
+    /// Pull the full thread for any entity — all events that touch it.
+    /// Matches on artifact, entity tags, and payload fields containing the id.
+    pub fn thread(&self, entity_id: &str) -> Vec<FabricEvent> {
+        self.inner.read().unwrap().log.iter()
+            .filter(|e| {
+                e.artifact == entity_id
+                    || e.entities.iter().any(|t| t == entity_id)
+                    || e.payload.to_string().contains(entity_id)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Latest N events across all artifacts — the live fabric stream snapshot.
+    pub fn recent(&self, n: usize) -> Vec<FabricEvent> {
+        let log = self.inner.read().unwrap();
+        let total = log.log.len();
+        log.log[total.saturating_sub(n)..].to_vec()
+    }
+
     pub fn full_log(&self) -> Vec<FabricEvent> {
         self.inner.read().unwrap().log.clone()
     }
 
     pub fn dead_log(&self) -> Vec<FabricEvent> {
         self.inner.read().unwrap().dead_log.clone()
+    }
+
+    pub fn stats(&self) -> serde_json::Value {
+        let inner = self.inner.read().unwrap();
+        let open   = inner.log.iter().filter(|e| e.status == FabricStatus::Open).count();
+        let closed = inner.dead_log.len();
+        let by_stage: std::collections::HashMap<&str, usize> = {
+            let mut m = std::collections::HashMap::new();
+            for e in &inner.log { *m.entry(e.stage.as_str()).or_insert(0) += 1; }
+            m
+        };
+        serde_json::json!({
+            "total_events":  inner.log.len(),
+            "open_events":   open,
+            "dead_letters":  closed,
+            "by_stage":      by_stage,
+            "log_capacity":  10_000,
+        })
+    }
+}
+
+// ── Thread handler — auto-tags events with related entities ───────────────────
+// Registers as a fabric handler. Inspects every event payload for known entity
+// ID patterns and adds them to the entities thread list.
+
+pub struct ThreadHandler;
+impl FabricHandler for ThreadHandler {
+    fn name(&self) -> &'static str { "thread" }
+    fn handle(&self, _ev: &FabricEvent) {
+        // Threading happens at emit time via with_entities() on the caller side.
+        // This handler is a no-op hook point for future enrichment.
     }
 }
 
@@ -324,4 +395,19 @@ impl FabricEvent {
 
 impl Default for Fabric {
     fn default() -> Self { Self::new() }
+}
+
+impl Default for FabricEvent {
+    fn default() -> Self {
+        Self {
+            id:         String::new(),
+            artifact:   String::new(),
+            stage:      crate::lifecycle::Stage::Build,
+            status:     FabricStatus::Open,
+            payload:    serde_json::Value::Null,
+            emitted_at: Utc::now(),
+            entities:   vec![],
+            source:     String::new(),
+        }
+    }
 }

@@ -205,6 +205,7 @@ async fn execute_path(
                 "path":   exec.path,
             }),
             emitted_at: chrono::Utc::now(),
+            ..crate::fabric::FabricEvent::default()
         });
     }
 
