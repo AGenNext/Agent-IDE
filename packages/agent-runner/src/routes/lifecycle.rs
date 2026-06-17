@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use crate::store::AppState;
-use crate::lifecycle::{Gate, GateRecord, GateStatus, Stage};
+use crate::lifecycle::{GateRecord, GateStatus, Stage};
 
 // ── Request / response shapes ─────────────────────────────────────────────────
 
@@ -55,19 +55,9 @@ async fn transition(
     State(state): State<Arc<AppState>>,
     Json(req): Json<TransitionReq>,
 ) -> Json<TransitionResp> {
-    let gate = Gate::new(&state.lifecycle, &req.artifact);
-    let rec = match req.stage {
-        Stage::Build    => gate.build(&req.payload),
-        Stage::Sign     => gate.sign(&req.payload),
-        Stage::Push     => gate.push(&req.payload),
-        Stage::Sync     => gate.sync(&req.payload),
-        Stage::Deploy   => gate.deploy(&req.payload),
-        Stage::Run      => gate.run(&req.payload),
-        Stage::Observe  => gate.observe(&req.payload),
-        Stage::Feedback => gate.feedback(&req.payload),
-    };
-    // Gate result → fabric: fills the gap to the next stage
-    state.fabric.emit_gate(&rec, req.payload.clone());
+    // Pipeline drives the executor for this stage; fabric event emitted inside run_stage.
+    let result = state.pipeline.run_stage(&req.artifact, req.stage, req.payload.clone()).await;
+    let rec    = result.gate;
 
     // Real-time liquid usage — meter at the gate, settle instantly.
     // Every gate opening is a micro-transaction: compute time + token cost.

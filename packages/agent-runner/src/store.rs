@@ -5,6 +5,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use crate::lifecycle::LifecycleRegistry;
 use crate::fabric::Fabric;
+use crate::core;
 use crate::federation::FederationRegistry;
 use crate::usage::UsageMeter;
 use crate::onboarding::OnboardingRegistry;
@@ -118,7 +119,9 @@ pub struct AppState {
     // ConfigDB handle — SurrealDB (embedded or remote)
     pub config:   std::sync::Arc<crate::configdb::ConfigDB>,
     // Lifecycle gate registry — idempotent ACID stage transitions
-    pub lifecycle: LifecycleRegistry,
+    pub lifecycle: Arc<LifecycleRegistry>,
+    // Pipeline — the composed lifecycle; 8 executors wired in stage order
+    pub pipeline: Arc<core::Pipeline>,
     // Fabric — framework that fills the gaps between gates
     pub fabric: Arc<Fabric>,
     // Federation — real, unique, identifiable, governed, autonomous, federal, accountable, intelligent
@@ -168,7 +171,24 @@ impl AppState {
         // ConfigDB: start with in-memory stub; connect() upgrades async on startup
         let config = std::sync::Arc::new(crate::configdb::ConfigDB::new_sync());
 
-        let fabric = Arc::new(Fabric::new());
+        let fabric    = Arc::new(Fabric::new());
+        let lifecycle = Arc::new(LifecycleRegistry::new());
+        let pipeline  = Arc::new(
+            core::standard_pipeline(
+                std::env::var("REGISTRY_URL")
+                    .unwrap_or_else(|_| "registry.autonomyx.io".into()),
+                std::env::var("ARGOCD_APP")
+                    .unwrap_or_else(|_| "autonomyx".into()),
+                std::env::var("K8S_NAMESPACE")
+                    .unwrap_or_else(|_| "autonomyx".into()),
+                std::env::var("SIGNER_DID")
+                    .unwrap_or_else(|_| "did:autonomyx:platform".into()),
+                std::env::var("GIT_SHA")
+                    .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into()),
+                lifecycle.clone(),
+                fabric.clone(),
+            ).expect("failed to compose standard pipeline"),
+        );
 
         Self {
             agents:     RwLock::new(agents),
@@ -177,7 +197,8 @@ impl AppState {
             apps:       RwLock::new(HashMap::new()),
             ws_sinks:   RwLock::new(HashMap::new()),
             config,
-            lifecycle:  LifecycleRegistry::new(),
+            lifecycle,
+            pipeline,
             fabric,
             federation:  FederationRegistry::new(),
             usage:       UsageMeter::new(),

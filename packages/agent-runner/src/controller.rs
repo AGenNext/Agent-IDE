@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use serde_json::json;
 use crate::store::AppState;
-use crate::lifecycle::{Gate, Stage};
+use crate::lifecycle::{Stage, GateStatus};
 
 /// Start the controller reconciliation loop.
 /// Runs as a background tokio task — never blocks the API server.
@@ -137,20 +137,10 @@ async fn reconcile(state: &Arc<AppState>) {
 }
 
 async fn advance_gate(state: &Arc<AppState>, artifact: &str, stage: Stage, payload: serde_json::Value) {
-    let gate = Gate::new(&state.lifecycle, artifact);
-    let rec  = match stage {
-        Stage::Build    => gate.build(&payload),
-        Stage::Sign     => gate.sign(&payload),
-        Stage::Push     => gate.push(&payload),
-        Stage::Sync     => gate.sync(&payload),
-        Stage::Deploy   => gate.deploy(&payload),
-        Stage::Run      => gate.run(&payload),
-        Stage::Observe  => gate.observe(&payload),
-        Stage::Feedback => gate.feedback(&payload),
-    };
-
-    // Emit fabric event — fills the gap between gates
-    state.fabric.emit_gate(&rec, payload.clone());
+    // Pipeline drives the stage through its registered executor.
+    // Fabric event is emitted inside run_stage — no need to emit again here.
+    let result = state.pipeline.run_stage(artifact, stage, payload.clone()).await;
+    let rec    = result.gate;
 
     // Record accountability — controller is accountable for every transition
     {
