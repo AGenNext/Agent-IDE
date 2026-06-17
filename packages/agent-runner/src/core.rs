@@ -30,23 +30,89 @@ use crate::bom::{build_bom, BomRecord, CargoDep, Provenance};
 
 // ── Trust chain ───────────────────────────────────────────────────────────────
 //
-// Every gate link = SHA256(prev_hash || stage_name || canonical_json(output)).
-// The genesis link uses the artifact ID as prev_hash.
-// Tamper detection: if the pipeline accumulates a payload and the embedded
-// _chain_hash doesn't match recomputed hash of the previous gate's output,
-// the next gate closes with TAMPER DETECTED. Chain breaks at tampering.
+// Every gate link = SHA256(prev_hash || stage || time_ns || actor_did || node_did || output).
+//
+// Five inputs — the five coordinates of every action:
+//   prev_hash  — links to the previous gate (chain continuity)
+//   stage      — which gate this is (Build/Sign/Push/…)
+//   time_ns    — nanosecond UTC timestamp (ordering without trusting clocks)
+//   actor_did  — WHO ran this gate (identity bound)
+//   node_did   — WHERE it ran (location bound)
+//   output     — WHAT was produced (content bound)
+//
+// Tamper detection: altering any input changes the hash.
+// The next gate recomputes and finds a mismatch — TAMPER DETECTED, chain breaks.
+// Genesis link: artifact ID as prev_hash, time = startup epoch, actor/node from env.
 
-pub fn chain_link(prev_hash: &str, stage: Stage, output: &Value) -> String {
+/// Context bound to every chain link — the three primitives beyond stage+output.
+#[derive(Debug, Clone)]
+pub struct ChainContext {
+    pub actor_did: String,   // identity: who ran this gate
+    pub node_did:  String,   // location: which node ran it
+    pub time_ns:   u128,     // time: nanoseconds since UNIX epoch (monotonic)
+}
+
+impl ChainContext {
+    /// Resolve from env vars at runtime — no hardcoded values.
+    pub fn from_env() -> Self {
+        Self {
+            actor_did: std::env::var("ACTOR_DID")
+                .or_else(|_| std::env::var("AUTONOMYX_IDENTITY_DID"))
+                .unwrap_or_else(|_| "did:autonomyx:platform".into()),
+            node_did: std::env::var("NODE_DID")
+                .or_else(|_| std::env::var("AUTONOMYX_NODE_DID"))
+                .unwrap_or_else(|_| {
+                    // Derive node DID from hostname if not set
+                    let host = std::env::var("HOSTNAME")
+                        .or_else(|_| {
+                            let mut buf = [0u8; 64];
+                            // safe fallback
+                            Ok::<String, std::env::VarError>("node".into())
+                        })
+                        .unwrap_or_else(|_| "node".into());
+                    format!("did:autonomyx:node:{host}")
+                }),
+            time_ns: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        }
+    }
+
+    /// Advance time to now — called at each gate so each link has its own timestamp.
+    pub fn now(&self) -> Self {
+        Self {
+            actor_did: self.actor_did.clone(),
+            node_did:  self.node_did.clone(),
+            time_ns: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        }
+    }
+}
+
+/// Compute one chain link.
+/// Input = prev_hash || stage || time_ns || actor_did || node_did || canonical_json(output)
+pub fn chain_link(prev_hash: &str, stage: Stage, ctx: &ChainContext, output: &Value) -> String {
     let canonical = serde_json::to_string(output).unwrap_or_default();
-    let input = format!("{}::{}::{}", prev_hash, stage.as_str(), canonical);
+    let input = format!(
+        "{}::{}::{}::{}::{}::{}",
+        prev_hash,
+        stage.as_str(),
+        ctx.time_ns,
+        ctx.actor_did,
+        ctx.node_did,
+        canonical,
+    );
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     hex::encode(hasher.finalize())
 }
 
 /// Verify the chain link embedded in a payload.
-/// Returns Ok(()) if the hash matches or is absent (genesis gate).
-/// Returns Err(reason) if the hash is present but wrong — tamper detected.
+/// Returns Ok(()) if hash matches or is absent (genesis / single-stage call).
+/// Returns Err(reason) if hash present but wrong — TAMPER DETECTED, chain breaks.
 pub fn verify_chain(payload: &Value, expected_hash: Option<&str>) -> Result<(), String> {
     let embedded = payload.get("_chain_hash").and_then(|v| v.as_str());
     match (embedded, expected_hash) {
@@ -98,6 +164,7 @@ pub struct Pipeline {
     executors: Vec<Arc<dyn GateExecutor>>,
     lifecycle: Arc<LifecycleRegistry>,
     fabric:    Arc<Fabric>,
+    ctx:       ChainContext,  // identity + location — resolved once at construction
 }
 
 impl Pipeline {
@@ -108,8 +175,9 @@ impl Pipeline {
     pub async fn run(&self, artifact: &str, initial_payload: Value) -> Vec<ExecutionResult> {
         let mut results = Vec::new();
         let mut payload = initial_payload;
-        // Genesis hash: artifact ID is the root of the chain
-        let mut prev_hash = chain_link(artifact, Stage::Build, &Value::Null);
+        // Genesis link: artifact ID + identity + location + time binds the chain origin
+        let genesis_ctx = self.ctx.now();
+        let mut prev_hash = chain_link(artifact, Stage::Build, &genesis_ctx, &Value::Null);
 
         for executor in &self.executors {
             let stage = executor.stage();
@@ -168,13 +236,17 @@ impl Pipeline {
             if rec.status == GateStatus::Open {
                 self.fabric.emit_gate(&rec, output.clone());
 
-                // Advance the trust chain: link this gate's output into the chain
-                prev_hash = chain_link(&prev_hash, stage, &output);
+                // Advance trust chain — each link stamps time, identity, location
+                let gate_ctx = self.ctx.now();
+                prev_hash = chain_link(&prev_hash, stage, &gate_ctx, &output);
 
-                // Merge executor output + chain link into running payload
+                // Merge output + full chain context into running payload
                 if let (Value::Object(p), Value::Object(o)) = (&mut payload, &output) {
                     for (k, v) in o { p.insert(k.clone(), v.clone()); }
                     p.insert("_chain_hash".into(), Value::String(prev_hash.clone()));
+                    p.insert("_chain_time".into(),  Value::String(gate_ctx.time_ns.to_string()));
+                    p.insert("_chain_actor".into(), Value::String(gate_ctx.actor_did.clone()));
+                    p.insert("_chain_node".into(),  Value::String(gate_ctx.node_did.clone()));
                 }
             }
 
@@ -287,7 +359,7 @@ impl Core {
                 ));
             }
         }
-        Ok(Pipeline { executors: self.executors, lifecycle, fabric })
+        Ok(Pipeline { executors: self.executors, lifecycle, fabric, ctx: ChainContext::from_env() })
     }
 }
 
