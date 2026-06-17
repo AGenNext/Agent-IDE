@@ -52,6 +52,7 @@ mod teams;
 mod cncf;
 mod theory;
 mod scale;
+mod mega_agent;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -150,6 +151,9 @@ async fn main() {
 
     // ── State ─────────────────────────────────────────────────────────────────
     let state = Arc::new(AppState::new());
+
+    // ── MegaAgent — register singleton at startup ─────────────────────────────
+    mega_agent::register(&state);
 
     // ── ConfigDB (SurrealDB) — async upgrade from in-memory stub ─────────────
     match configdb::ConfigDB::connect().await {
@@ -252,6 +256,8 @@ async fn main() {
         .nest("/api", routes::scale::router(state.clone()))
         // Cloud stack — layered cloud-native deployment manifest
         .nest("/api", routes::cloud::router())
+        // MegaAgent — FSM-based auto multi-agent orchestrator (MetaAgent arXiv 2507.22606)
+        .nest("/api", routes::mega_agent::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
         .layer(middleware::from_fn({
