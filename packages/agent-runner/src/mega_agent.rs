@@ -811,6 +811,25 @@ pub async fn execute_fsm(
                 // Null-transition: no condition met — give feedback and retry
                 null_transitions += 1;
 
+                // Self-improvement trigger: emit event so loop_coordinator can improve this agent's prompt
+                let out_preview = output.chars().take(800).collect::<String>();
+                let sys_preview = system_prompt.chars().take(500).collect::<String>();
+                state.fabric.emit(
+                    FabricEvent::open(
+                        &format!("fsm:{execution_id}:null:{iteration}"),
+                        Stage::Feedback,
+                        json!({
+                            "action":        "fsm_state_output",
+                            "agent_id":      &agent_id,
+                            "instruction":   &instruction,
+                            "output":        out_preview,
+                            "succeeded":     false,
+                            "condition":     null,
+                            "system_prompt": sys_preview,
+                        }),
+                    ).with_entities([format!("agent:{agent_id}")])
+                );
+
                 if let Some(agent) = fsm.agents.iter_mut().find(|a| a.agent_id == agent_id) {
                     agent.memory.push(format!("FEEDBACK: Output not accepted. Retry instruction: {instruction}"));
                 }
@@ -899,7 +918,15 @@ async fn execute_agent(
         .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
         .or_else(|_| std::env::var("OPENAI_API_KEY"))
         .unwrap_or_default();
-    let sys = if system_prompt.is_empty() {
+
+    // Check ConfigDB for a self-improved prompt; it overrides the FSM-designed default
+    let improved_rec = state.config.get("agent_prompt", agent_id).await;
+    let sys = if let Some(rec) = improved_rec {
+        rec.data.get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or(system_prompt)
+            .to_string()
+    } else if system_prompt.is_empty() {
         format!("You are {agent_id}, a specialist agent in the Autonomyx platform. Complete your instruction thoroughly and precisely.")
     } else {
         system_prompt.to_string()
@@ -925,6 +952,66 @@ async fn execute_agent(
 
     state.finish_run(&run.run_id, RunStatus::Completed);
     output
+}
+
+// ── Self-improvement ──────────────────────────────────────────────────────────
+//
+// Called by loop_coordinator when a null-transition triggers an fsm_state_output event.
+// Asks the LLM to produce a better system_prompt for the agent; stores it in ConfigDB.
+// On the next FSM execution, execute_agent reads the improved prompt from ConfigDB first.
+
+pub async fn improve_prompt(
+    state:         &Arc<AppState>,
+    agent_id:      &str,
+    system_prompt: &str,
+    instruction:   &str,
+    output:        &str,
+    succeeded:     bool,
+    condition:     &str,
+) {
+    let model = state.llm_config.read().unwrap().default_model.clone();
+    let api_key = std::env::var("LLM_API_KEY")
+        .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        .unwrap_or_default();
+
+    let outcome = if succeeded { "succeeded" } else { "failed (null-transition)" };
+    let user_msg = format!(
+        "Agent ID: {agent_id}\n\
+         Current system prompt:\n{system_prompt}\n\n\
+         Instruction given: {instruction}\n\
+         Agent output ({outcome}):\n{output}\n\
+         Required condition (unmet): {condition}\n\n\
+         Return ONLY an improved system prompt. No explanation, no preamble."
+    );
+
+    let messages = vec![json!({ "role": "user", "content": user_msg })];
+
+    let improved = match crate::providers::complete(
+        state.egress.llm(),
+        &model,
+        &api_key,
+        "You are a meta-optimizer improving AI agent system prompts. Return ONLY the improved prompt text.",
+        &messages,
+        512,
+    ).await {
+        Ok(resp) if !resp.text.trim().is_empty() => resp.text.trim().to_string(),
+        Ok(_) => return,
+        Err(e) => {
+            tracing::warn!(agent_id, error = %e, "improve_prompt: LLM call failed");
+            return;
+        }
+    };
+
+    match state.config.put(
+        "agent_prompt",
+        agent_id,
+        json!({ "prompt": improved }),
+        "self_improvement",
+    ).await {
+        Ok(_)  => tracing::info!(agent_id, "improve_prompt: stored improved system_prompt in ConfigDB"),
+        Err(e) => tracing::warn!(agent_id, error = %e, "improve_prompt: failed to store in ConfigDB"),
+    }
 }
 
 // ── Condition verifier ────────────────────────────────────────────────────────

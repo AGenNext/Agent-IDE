@@ -60,7 +60,11 @@ async fn loop_task(state: Arc<AppState>) {
 
         // ── Gate: Feedback ────────────────────────────────────────────────────
         if matches!(event.stage, Stage::Feedback) && matches!(event.status, FabricStatus::Open) {
-            advance_goals_for(&state, &event.artifact).await;
+            if event.payload.get("action").and_then(|v| v.as_str()) == Some("fsm_state_output") {
+                trigger_self_improvement(&state, &event.payload);
+            } else {
+                advance_goals_for(&state, &event.artifact).await;
+            }
         }
 
         // ── Gate: Observe ─────────────────────────────────────────────────────
@@ -167,6 +171,31 @@ async fn record_compute_impact(state: &AppState, artifact: &str) {
             &format!("compute gate completed for {}", artifact),
         );
     }
+}
+
+fn trigger_self_improvement(state: &Arc<AppState>, payload: &serde_json::Value) {
+    let agent_id      = payload["agent_id"].as_str().unwrap_or("").to_string();
+    let system_prompt = payload["system_prompt"].as_str().unwrap_or("").to_string();
+    let instruction   = payload["instruction"].as_str().unwrap_or("").to_string();
+    let output        = payload["output"].as_str().unwrap_or("").to_string();
+    let succeeded     = payload["succeeded"].as_bool().unwrap_or(false);
+    let condition     = payload["condition"].as_str().unwrap_or("").to_string();
+
+    if agent_id.is_empty() { return; }
+
+    tracing::debug!(agent_id = %agent_id, "loop_coordinator: self-improvement task spawned");
+    let state2 = state.clone();
+    tokio::spawn(async move {
+        crate::mega_agent::improve_prompt(
+            &state2,
+            &agent_id,
+            &system_prompt,
+            &instruction,
+            &output,
+            succeeded,
+            &condition,
+        ).await;
+    });
 }
 
 fn stage_to_node(stage: &Stage) -> Option<&'static str> {
