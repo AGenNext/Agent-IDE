@@ -297,12 +297,13 @@ pub struct FiniteStateMachine {
 /// Agent definition used by the FSM designer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FsmAgentDef {
-    pub agent_id:     String,
-    pub name:         String,
-    pub role:         String,
+    pub agent_id:      String,
+    pub name:          String,
+    pub role:          String,
     pub system_prompt: String,
-    pub tools:        Vec<String>,
-    pub memory:       Vec<String>,  // accumulated listener outputs
+    pub model:         Option<String>, // override global LlmConfig.default_model
+    pub tools:         Vec<String>,
+    pub memory:        Vec<String>,    // accumulated listener outputs
 }
 
 impl FiniteStateMachine {
@@ -380,24 +381,21 @@ fn software_development_fsm() -> (Vec<FsmAgentDef>, Vec<FsmState>, Vec<FsmTransi
             name: "RequirementDesigner".into(),
             role: "Gather and analyse software requirements; produce architecture design".into(),
             system_prompt: "You are RequirementDesigner. Understand software requirements and create robust, scalable architecture. Output structured requirements doc.".into(),
-            tools: vec!["web_search".into()],
-            memory: vec![],
+            model: None, tools: vec!["web_search".into()], memory: vec![],
         },
         FsmAgentDef {
             agent_id: "code_developer".into(),
             name: "CodeDeveloper".into(),
             role: "Write clean, efficient code based on requirements. Save to file system.".into(),
             system_prompt: "You are CodeDeveloper. Write production-quality code based on the RequirementDesigner's output. Produce README. Save all files.".into(),
-            tools: vec!["shell".into()],
-            memory: vec![],
+            model: None, tools: vec!["shell".into()], memory: vec![],
         },
         FsmAgentDef {
             agent_id: "tester".into(),
             name: "Tester".into(),
             role: "Test software. Report bugs. Verify all checkpoints pass.".into(),
             system_prompt: "You are Tester. Execute the software, run tests, report bugs. If bugs found, describe them precisely for CodeDeveloper to fix.".into(),
-            tools: vec!["shell".into()],
-            memory: vec![],
+            model: None, tools: vec!["shell".into()], memory: vec![],
         },
     ];
 
@@ -445,19 +443,19 @@ fn research_analysis_fsm() -> (Vec<FsmAgentDef>, Vec<FsmState>, Vec<FsmTransitio
             agent_id: "researcher".into(), name: "Researcher".into(),
             role: "Gather information from multiple sources".into(),
             system_prompt: "You are Researcher. Use web search to gather comprehensive information on the topic.".into(),
-            tools: vec!["web_search".into()], memory: vec![],
+            model: None, tools: vec!["web_search".into()], memory: vec![],
         },
         FsmAgentDef {
             agent_id: "analyst".into(), name: "Analyst".into(),
             role: "Synthesise findings into structured analysis".into(),
             system_prompt: "You are Analyst. Synthesise the Researcher's findings. Identify patterns, conflicts, and key insights.".into(),
-            tools: vec![], memory: vec![],
+            model: None, tools: vec![], memory: vec![],
         },
         FsmAgentDef {
             agent_id: "reporter".into(), name: "Reporter".into(),
             role: "Produce final structured report".into(),
             system_prompt: "You are Reporter. Produce a clear, structured report from the Analyst's synthesis.".into(),
-            tools: vec![], memory: vec![],
+            model: None, tools: vec![], memory: vec![],
         },
     ];
 
@@ -482,13 +480,13 @@ fn data_science_fsm() -> (Vec<FsmAgentDef>, Vec<FsmState>, Vec<FsmTransition>) {
             agent_id: "data_prep".into(), name: "DataPreparationAndModelAgent".into(),
             role: "Preprocess data, select model, train, evaluate".into(),
             system_prompt: "You are DataPreparationAndModelAgent. Clean data, select and train ML model, evaluate on test set. Report metrics.".into(),
-            tools: vec!["shell".into()], memory: vec![],
+            model: None, tools: vec!["shell".into()], memory: vec![],
         },
         FsmAgentDef {
             agent_id: "reporter".into(), name: "ReportingAgent".into(),
             role: "Compile metrics and generate comprehensive report".into(),
             system_prompt: "You are ReportingAgent. Compile evaluation metrics and generate a comprehensive report for the user.".into(),
-            tools: vec![], memory: vec![],
+            model: None, tools: vec![], memory: vec![],
         },
     ];
 
@@ -510,19 +508,19 @@ fn general_task_fsm(domain: &str) -> (Vec<FsmAgentDef>, Vec<FsmState>, Vec<FsmTr
             agent_id: "planner".into(), name: "Planner".into(),
             role: "Decompose goal into actionable plan".into(),
             system_prompt: format!("You are Planner. Your goal: {domain}. Produce a clear, actionable plan."),
-            tools: vec![], memory: vec![],
+            model: None, tools: vec![], memory: vec![],
         },
         FsmAgentDef {
             agent_id: "executor".into(), name: "Executor".into(),
             role: "Execute the plan step by step".into(),
             system_prompt: "You are Executor. Follow the plan, execute each step, report results.".into(),
-            tools: vec!["shell".into(), "web_search".into()], memory: vec![],
+            model: None, tools: vec!["shell".into(), "web_search".into()], memory: vec![],
         },
         FsmAgentDef {
             agent_id: "reviewer".into(), name: "Reviewer".into(),
             role: "Review results and produce final output".into(),
             system_prompt: "You are Reviewer. Review the Executor's results. If complete, submit. If not, identify gaps.".into(),
-            tools: vec![], memory: vec![],
+            model: None, tools: vec![], memory: vec![],
         },
     ];
 
@@ -711,13 +709,13 @@ pub async fn execute_fsm(
             .map(|a| a.memory.join("\n"))
             .unwrap_or_default();
 
-        // Get agent system_prompt for LLM call
-        let system_prompt = fsm.agents.iter()
+        // Get agent definition for LLM call
+        let (system_prompt, agent_model) = fsm.agents.iter()
             .find(|a| a.agent_id == agent_id)
-            .map(|a| a.system_prompt.clone())
+            .map(|a| (a.system_prompt.clone(), a.model.clone()))
             .unwrap_or_default();
 
-        // Execute: call LLM with system_prompt + memory + instruction + query
+        // Execute: call LLM with per-agent or global-config model
         let output = execute_agent(
             &state,
             &agent_id,
@@ -726,6 +724,7 @@ pub async fn execute_fsm(
             &query,
             &tools,
             &system_prompt,
+            agent_model.as_deref(),
         ).await;
 
         // Final state
@@ -846,14 +845,22 @@ pub async fn execute_fsm(
 // ── Agent execution ───────────────────────────────────────────────────────────
 
 async fn execute_agent(
-    state:        &Arc<AppState>,
-    agent_id:     &str,
-    instruction:  &str,
-    memory:       &str,
-    query:        &str,
-    tools:        &[String],
+    state:         &Arc<AppState>,
+    agent_id:      &str,
+    instruction:   &str,
+    memory:        &str,
+    query:         &str,
+    tools:         &[String],
     system_prompt: &str,
+    agent_model:   Option<&str>,  // per-agent override; None → global config
 ) -> String {
+    // Resolve model: per-agent → global runtime config → never hardcoded
+    let model = agent_model
+        .filter(|m| !m.is_empty())
+        .map(|m| m.to_string())
+        .unwrap_or_else(|| state.llm_config.read().unwrap().default_model.clone());
+    let max_tokens = state.llm_config.read().unwrap().default_max_tokens;
+
     let run = state.create_run(agent_id, agent_id, "mega/fsm", instruction);
 
     // Invoke tools before the LLM call so results are available as context
@@ -888,7 +895,10 @@ async fn execute_agent(
 
     let messages = vec![json!({ "role": "user", "content": user_content })];
 
-    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    let api_key = std::env::var("LLM_API_KEY")
+        .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        .unwrap_or_default();
     let sys = if system_prompt.is_empty() {
         format!("You are {agent_id}, a specialist agent in the Autonomyx platform. Complete your instruction thoroughly and precisely.")
     } else {
@@ -897,11 +907,11 @@ async fn execute_agent(
 
     let output = match crate::providers::complete(
         state.egress.llm(),
-        "claude-opus-4-8",
+        &model,
         &api_key,
         &sys,
         &messages,
-        4096,
+        max_tokens,
     ).await {
         Ok(resp) => resp.text,
         Err(e) => {

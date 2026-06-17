@@ -22,6 +22,46 @@ use crate::megaverse::Megaverse;
 use crate::teams::TeamRegistry;
 use crate::gateway::EgressClient;
 
+// ── LLM runtime config ───────────────────────────────────────────────────────
+// Mutable at runtime via PUT /api/providers/config — no restart required.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfig {
+    pub default_model:      String,
+    pub default_max_tokens: u32,
+    pub agent_models:       HashMap<String, String>, // agent_id → model override
+}
+
+impl LlmConfig {
+    pub fn from_env() -> Self {
+        let default_model = std::env::var("LLM_MODEL")
+            .or_else(|_| std::env::var("AGENT_MODEL"))
+            .unwrap_or_else(|_| {
+                // Auto-detect: if Anthropic key present, default to Claude; else GPT-4o
+                if std::env::var("ANTHROPIC_API_KEY").map(|v| !v.is_empty()).unwrap_or(false)
+                    || std::env::var("LLM_API_KEY").map(|v| !v.is_empty()).unwrap_or(false)
+                {
+                    "claude-opus-4-8".into()
+                } else if std::env::var("OPENAI_API_KEY").map(|v| !v.is_empty()).unwrap_or(false) {
+                    "gpt-4o".into()
+                } else {
+                    // Fall back to whatever LLM_PROVIDER says, or claude as safe default
+                    "claude-opus-4-8".into()
+                }
+            });
+        let default_max_tokens = std::env::var("LLM_MAX_TOKENS")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(4096);
+        Self { default_model, default_max_tokens, agent_models: HashMap::new() }
+    }
+
+    /// Resolve model for a given agent_id: per-agent override → global default.
+    pub fn model_for(&self, agent_id: &str) -> &str {
+        self.agent_models.get(agent_id)
+            .map(|s| s.as_str())
+            .unwrap_or(&self.default_model)
+    }
+}
+
 // ── Agent identity ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,6 +194,8 @@ pub struct AppState {
     pub teams: TeamRegistry,
     // Egress — single shared HTTP client pool; all outbound calls go through here
     pub egress: Arc<EgressClient>,
+    // LLM runtime config — mutable at runtime; no restart required
+    pub llm_config: RwLock<LlmConfig>,
 }
 
 impl AppState {
@@ -215,6 +257,7 @@ impl AppState {
             megaverse:   Arc::new(Megaverse::new()),
             teams:       TeamRegistry::new(),
             egress:      Arc::new(EgressClient::new()),
+            llm_config:  RwLock::new(LlmConfig::from_env()),
         }
     }
 
