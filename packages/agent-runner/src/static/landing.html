@@ -132,6 +132,7 @@ tr:hover td{background:var(--bg3)}
   <div class="tab" data-tab="fabric">Fabric</div>
   <div class="tab" data-tab="agents">Agents</div>
   <div class="tab" data-tab="config">Config</div>
+  <div class="tab" data-tab="metabase">Analytics</div>
   <div class="tab" data-tab="api">API Reference</div>
 </nav>
 
@@ -265,6 +266,41 @@ tr:hover td{background:var(--bg3)}
     <div class="card">
       <div class="section-title">ConfigDB</div>
       <div id="configdb-dump"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ METABASE / ANALYTICS ══════════════════════════════════════════ -->
+<div id="panel-metabase" class="panel">
+  <div class="grid2" style="gap:16px;margin-bottom:16px">
+    <div class="card">
+      <div class="section-title">Metabase Setup</div>
+      <p style="font-size:.82rem;color:var(--subtle);margin-bottom:14px">
+        Metabase runs on port <strong style="color:var(--sky)">4000</strong> alongside this platform.
+        After first-run setup, embed your dashboards here via signed iframe URLs.
+      </p>
+      <div style="margin-bottom:12px">
+        <label>Metabase Dashboard URL (signed embed)</label>
+        <input id="mb-url" placeholder="http://your-vps:4000/embed/dashboard/TOKEN#bordered=false&titled=false">
+      </div>
+      <button class="btn btn-primary" onclick="loadMetabase()">Load Dashboard</button>
+      <a href="#" id="mb-open" target="_blank" style="margin-left:12px;font-size:.82rem;color:var(--indigo)">Open Metabase ↗</a>
+    </div>
+    <div class="card">
+      <div class="section-title">Quick Metrics</div>
+      <div id="quick-metrics" style="display:grid;grid-template-columns:1fr 1fr;gap:10px"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <div class="section-title" style="margin:0">Embedded Dashboard</div>
+      <span class="badge" id="mb-status">not connected</span>
+    </div>
+    <iframe id="mb-frame" style="width:100%;height:600px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);display:none" allow="fullscreen"></iframe>
+    <div id="mb-placeholder" style="height:600px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:var(--muted);font-size:.85rem;border:1px dashed var(--border);border-radius:8px">
+      <div style="font-size:2rem">📊</div>
+      <div>Paste a Metabase signed embed URL above</div>
+      <div style="font-size:.75rem">Metabase → Admin → Embedding → Static embedding → Copy URL</div>
     </div>
   </div>
 </div>
@@ -740,6 +776,45 @@ async function pollFabric() {
   }
 }
 setInterval(pollFabric, 5000);
+
+// ── Metabase ──────────────────────────────────────────────────────────
+function loadMetabase() {
+  const url = document.getElementById('mb-url').value.trim();
+  if (!url) return;
+  const frame = document.getElementById('mb-frame');
+  const ph    = document.getElementById('mb-placeholder');
+  const st    = document.getElementById('mb-status');
+  frame.src     = url;
+  frame.style.display = 'block';
+  ph.style.display    = 'none';
+  st.textContent      = 'embedded';
+  st.style.color      = 'var(--green)';
+  // update open link to base URL
+  try {
+    const base = new URL(url);
+    document.getElementById('mb-open').href = `${base.protocol}//${base.host}`;
+  } catch(_) {}
+}
+
+async function loadQuickMetrics() {
+  const [agents, runs, fabric, config] = await Promise.all([
+    api('/api/agents'), api('/api/runs'), api('/api/fabric/log'), api('/api/providers/config'),
+  ]);
+  const agentCount = (agents?.agents||agents||[]).length;
+  const runCount   = (runs?.runs||runs||[]).length;
+  const evCount    = (fabric?.events||fabric||[]).length;
+  const model      = config?.default_model || '—';
+
+  document.getElementById('quick-metrics').innerHTML = `
+    <div class="exec-stat"><div class="v">${agentCount}</div><div class="k">Agents</div></div>
+    <div class="exec-stat"><div class="v">${runCount}</div><div class="k">Runs</div></div>
+    <div class="exec-stat"><div class="v">${evCount}</div><div class="k">Fabric Events</div></div>
+    <div class="exec-stat"><div class="v" style="font-size:.85rem;color:var(--sky)">${model}</div><div class="k">Model</div></div>
+  `;
+}
+
+// load quick metrics when tab active
+document.querySelector('[data-tab="metabase"]').addEventListener('click', loadQuickMetrics);
 
 window.addEventListener('resize', () => {
   fsmChart?.resize(); fabricChart?.resize(); agentChart?.resize();
