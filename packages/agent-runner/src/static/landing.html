@@ -127,7 +127,8 @@ tr:hover td{background:var(--bg3)}
 
 <!-- ── Nav ─────────────────────────────────────────────────────────── -->
 <nav>
-  <div class="tab active" data-tab="dashboard">Dashboard</div>
+  <div class="tab active" data-tab="graph">Architecture</div>
+  <div class="tab" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="orchestrate">Orchestrate</div>
   <div class="tab" data-tab="fabric">Fabric</div>
   <div class="tab" data-tab="agents">Agents</div>
@@ -138,8 +139,13 @@ tr:hover td{background:var(--bg3)}
 
 <main>
 
+<!-- ═══ ARCHITECTURE GRAPH ══════════════════════════════════════════ -->
+<div id="panel-graph" class="panel active" style="padding:0;height:100%;overflow:hidden">
+  <div id="arch-graph" style="width:100%;height:100%"></div>
+</div>
+
 <!-- ═══ DASHBOARD ════════════════════════════════════════════════════ -->
-<div id="panel-dashboard" class="panel active">
+<div id="panel-dashboard" class="panel">
   <div class="grid4" style="margin-bottom:20px">
     <div class="card stat"><div class="val" id="stat-agents">—</div><div class="lbl">Agents</div></div>
     <div class="card stat"><div class="val" id="stat-runs">—</div><div class="lbl">Runs</div></div>
@@ -758,7 +764,239 @@ async function loadConfigDB() {
     </div>`).join('');
 }
 
+// ── Architecture Graph ────────────────────────────────────────────────
+function initArchGraph() {
+  const el = document.getElementById('arch-graph');
+  if (!el) return;
+  const chart = echarts.init(el, 'dark');
+
+  const CAT = [
+    { name: 'Platform Primitives', itemStyle: { color: '#6366f1' } },
+    { name: 'Rust Runtime',        itemStyle: { color: '#38bdf8' } },
+    { name: 'AI / LLM',           itemStyle: { color: '#4ade80' } },
+    { name: 'Storage',             itemStyle: { color: '#fbbf24' } },
+    { name: 'Frontend / UI',       itemStyle: { color: '#e879f9' } },
+    { name: 'DevOps / Infra',      itemStyle: { color: '#fb923c' } },
+    { name: 'Identity / Trust',    itemStyle: { color: '#f87171' } },
+    { name: 'Events / Streaming',  itemStyle: { color: '#a78bfa' } },
+  ];
+
+  function n(name, cat, size, symbol) {
+    return { name, category: cat, symbolSize: size||22, symbol: symbol||'circle',
+      label: { show: true, fontSize: size > 34 ? 12 : 10, color: '#e2e8f0',
+               formatter: name.replace(/ /g,'\n') } };
+  }
+
+  const nodes = [
+    // ── Platform Primitives (cat 0) ───────────────────────────────────
+    n('Autonomyx\nPlatform', 0, 56, 'roundRect'),
+    n('FSM Engine',          0, 38),
+    n('MegaAgent',           0, 36),
+    n('Pipeline\n(8 gates)', 0, 34),
+    n('FabricEvent',         0, 32),
+    n('ConfigDB',            0, 30),
+    n('TrustChain',          0, 30),
+    n('LoopCoordinator',     0, 28),
+    n('GovernanceGraph',     0, 26),
+    n('AccessGrant\n(JIT)',  0, 24),
+    n('AgentType\n(30)',     0, 24),
+    n('LlmConfig',           0, 26),
+
+    // ── Rust Runtime (cat 1) ──────────────────────────────────────────
+    n('Rust 2021',     1, 40, 'roundRect'),
+    n('Tokio',         1, 34),
+    n('Axum 0.7',      1, 32),
+    n('Tower',         1, 26),
+    n('Reqwest 0.12',  1, 26),
+    n('Serde/JSON',    1, 22),
+    n('chrono/UUID',   1, 20),
+    n('SHA-2',         1, 24),
+
+    // ── AI / LLM (cat 2) ──────────────────────────────────────────────
+    n('Claude\n(Anthropic)', 2, 34),
+    n('OpenAI\nCompatible',  2, 30),
+    n('Ollama\n(local)',      2, 28),
+    n('improve_prompt()',     2, 24),
+
+    // ── Storage (cat 3) ───────────────────────────────────────────────
+    n('SurrealDB',   3, 36, 'diamond'),
+    n('kv-mem\n(default)',  3, 26),
+    n('RocksDB\n(persist)', 3, 26),
+
+    // ── Frontend / UI (cat 4) ─────────────────────────────────────────
+    n('Apache\nECharts',    4, 34),
+    n('Metabase\nv0.50',    4, 30),
+    n('Eclipse\nTheia',     4, 30),
+    n('landing.html\n(SPA)',4, 26),
+    n('WebSocket\nClient',  4, 22),
+
+    // ── DevOps / Infra (cat 5) ────────────────────────────────────────
+    n('Docker CE',       5, 34, 'roundRect'),
+    n('Docker\nCompose', 5, 28),
+    n('k3s / k8s',       5, 30),
+    n('Helm',            5, 24),
+    n('ArgoCD',          5, 24),
+    n('Caddy TLS',       5, 26),
+    n('GHCR',            5, 22),
+    n('GitHub\nActions', 5, 24),
+    n('install.sh',      5, 22),
+    n('musl static\nbinary', 5, 20),
+
+    // ── Identity / Trust (cat 6) ──────────────────────────────────────
+    n('DID (W3C)',        6, 30),
+    n('ChainContext',     6, 28),
+    n('mTLS\n(permissive→strict)', 6, 24),
+    n('Bearer\nAPI Key',  6, 22),
+    n('actor_did\nnode_did', 6, 22),
+
+    // ── Events / Streaming (cat 7) ────────────────────────────────────
+    n('WS /ws/fabric',  7, 30),
+    n('WS /ws/stream',  7, 26),
+    n('Broadcast\nChannel', 7, 26),
+    n('NATS\n(planned)', 7, 22),
+  ];
+
+  function e(src, tgt, lbl, w) {
+    return { source: src, target: tgt,
+      lineStyle: { width: w||1.5, curveness: 0.1 },
+      label: { show: !!lbl, formatter: lbl||'', fontSize: 9, color: '#64748b' } };
+  }
+
+  const edges = [
+    // Platform hub
+    e('Autonomyx\nPlatform', 'FSM Engine',         'orchestrates', 2.5),
+    e('Autonomyx\nPlatform', 'Pipeline\n(8 gates)','lifecycle', 2.5),
+    e('Autonomyx\nPlatform', 'FabricEvent',         'emits', 2),
+    e('Autonomyx\nPlatform', 'ConfigDB',            'persists', 2),
+    e('Autonomyx\nPlatform', 'GovernanceGraph',     'governs', 2),
+    e('Autonomyx\nPlatform', 'AccessGrant\n(JIT)',  'grants', 2),
+
+    // FSM
+    e('FSM Engine',  'MegaAgent',        'designs'),
+    e('FSM Engine',  'AgentType\n(30)',  'selects'),
+    e('FSM Engine',  'FabricEvent',      'emits on state'),
+    e('FSM Engine',  'LlmConfig',        'reads model'),
+    e('MegaAgent',   'LlmConfig',        'execute_agent()'),
+    e('MegaAgent',   'improve_prompt()', 'self-improves'),
+    e('LlmConfig',   'Claude\n(Anthropic)', 'routes'),
+    e('LlmConfig',   'OpenAI\nCompatible', 'routes'),
+    e('LlmConfig',   'Ollama\n(local)',     'routes'),
+    e('LoopCoordinator', 'FabricEvent',  'subscribes'),
+    e('LoopCoordinator', 'improve_prompt()', 'triggers'),
+    e('improve_prompt()', 'ConfigDB',    'stores prompt'),
+
+    // Pipeline
+    e('Pipeline\n(8 gates)', 'TrustChain', 'chain_link()'),
+    e('Pipeline\n(8 gates)', 'FabricEvent','emits at gate'),
+    e('TrustChain', 'SHA-2',  'SHA-256'),
+    e('TrustChain', 'ChainContext', 'actor+node+time'),
+    e('ChainContext', 'actor_did\nnode_did', 'binds'),
+    e('ChainContext', 'DID (W3C)', 'identity'),
+
+    // ConfigDB
+    e('ConfigDB', 'SurrealDB', 'embedded'),
+    e('SurrealDB', 'kv-mem\n(default)',   'mode'),
+    e('SurrealDB', 'RocksDB\n(persist)',  'mode'),
+
+    // Runtime
+    e('Rust 2021',   'Tokio',       'async runtime'),
+    e('Tokio',       'Axum 0.7',    'HTTP server'),
+    e('Axum 0.7',    'Tower',       'middleware'),
+    e('Axum 0.7',    'Reqwest 0.12','egress HTTP'),
+    e('Axum 0.7',    'Serde/JSON',  'serialize'),
+    e('Axum 0.7',    'Autonomyx\nPlatform', 'serves API'),
+    e('SHA-2',       'TrustChain',  'hashes'),
+
+    // Frontend
+    e('landing.html\n(SPA)', 'Apache\nECharts', 'CDN import'),
+    e('landing.html\n(SPA)', 'WebSocket\nClient', 'ws://'),
+    e('landing.html\n(SPA)', 'Metabase\nv0.50',   'iframe embed'),
+    e('Apache\nECharts', 'FSM Engine', 'graph viz'),
+    e('WebSocket\nClient', 'WS /ws/fabric', 'subscribes'),
+    e('Eclipse\nTheia', 'Axum 0.7', 'calls API'),
+    e('Metabase\nv0.50', 'ConfigDB', 'queries /api'),
+
+    // Events
+    e('FabricEvent', 'Broadcast\nChannel', 'publish'),
+    e('Broadcast\nChannel', 'WS /ws/fabric', 'fan-out'),
+    e('Broadcast\nChannel', 'WS /ws/stream', 'fan-out'),
+    e('NATS\n(planned)', 'Broadcast\nChannel', 'replaces'),
+
+    // Identity / security
+    e('Caddy TLS', 'Axum 0.7',    'reverse proxy'),
+    e('Caddy TLS', 'mTLS\n(permissive→strict)', 'enforces'),
+    e('Bearer\nAPI Key', 'Axum 0.7', 'gate'),
+    e('DID (W3C)', 'AccessGrant\n(JIT)', 'bound to'),
+
+    // DevOps
+    e('Docker CE',       'Docker\nCompose', 'orchestrated by'),
+    e('Docker\nCompose', 'Autonomyx\nPlatform', 'runner service'),
+    e('Docker\nCompose', 'Eclipse\nTheia', 'ide service'),
+    e('Docker\nCompose', 'Metabase\nv0.50', 'metabase service'),
+    e('Docker CE',       'k3s / k8s',   'or'),
+    e('k3s / k8s',       'Helm',        'packaged by'),
+    e('Helm',            'ArgoCD',      'GitOps via'),
+    e('GitHub\nActions', 'GHCR',        'publishes to'),
+    e('GitHub\nActions', 'musl static\nbinary', 'builds'),
+    e('install.sh',      'Docker CE',   'installs'),
+    e('GHCR',            'Docker CE',   'image pull'),
+    e('musl static\nbinary', 'Rust 2021', 'compiled from'),
+  ];
+
+  chart.setOption({
+    backgroundColor: '#0a0a0f',
+    tooltip: {
+      formatter: p => p.dataType === 'edge'
+        ? `<b>${p.data.source}</b> → <b>${p.data.target}</b>${p.data.label?.formatter ? '<br><i>'+p.data.label.formatter+'</i>' : ''}`
+        : `<b>${p.name.replace(/\n/g,' ')}</b><br><span style="color:#64748b">${CAT[p.data.category]?.name||''}</span>`,
+    },
+    legend: [{
+      data: CAT.map(c => c.name),
+      orient: 'vertical',
+      right: 16,
+      top: 16,
+      textStyle: { color: '#94a3b8', fontSize: 11 },
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+    }],
+    series: [{
+      type: 'graph',
+      layout: 'force',
+      roam: true,
+      draggable: true,
+      zoom: 0.85,
+      categories: CAT,
+      force: {
+        repulsion: 320,
+        gravity: 0.06,
+        edgeLength: [80, 180],
+        layoutAnimation: true,
+        friction: 0.6,
+      },
+      edgeSymbol: ['none', 'arrow'],
+      edgeSymbolSize: [0, 8],
+      label: { show: true, position: 'inside', fontSize: 10 },
+      lineStyle: { color: 'source', opacity: 0.55 },
+      emphasis: {
+        focus: 'adjacency',
+        lineStyle: { width: 3, opacity: 1 },
+        label: { fontSize: 12, fontWeight: 700 },
+      },
+      nodes,
+      edges,
+    }],
+  });
+
+  window.addEventListener('resize', () => chart.resize());
+}
+
+document.querySelector('[data-tab="graph"]').addEventListener('click', () => {
+  setTimeout(initArchGraph, 50);
+});
+
 // ── Boot ──────────────────────────────────────────────────────────────
+initArchGraph();
 checkHealth();
 setInterval(checkHealth, 15000);
 loadDashboard();
