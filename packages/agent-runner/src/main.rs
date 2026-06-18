@@ -53,6 +53,7 @@ mod cncf;
 mod theory;
 mod scale;
 mod mega_agent;
+mod use_agent;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -254,6 +255,8 @@ async fn main() {
         .nest("/api", routes::cloud::router())
         // MegaAgent — FSM-based auto multi-agent orchestrator (MetaAgent arXiv 2507.22606)
         .nest("/api", routes::mega_agent::router(state.clone()))
+        // USEagent — Unified Software Engineering Agent (ICSE '26)
+        .nest("/api", routes::use_agent::router(state.clone()))
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
         .layer(middleware::from_fn({
