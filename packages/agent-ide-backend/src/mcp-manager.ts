@@ -2,6 +2,9 @@ import { spawn, ChildProcess } from 'child_process';
 import * as readline from 'readline';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { policyEngine } from './policy-engine';
+import { auditLog } from './audit-log';
+import { approvalGate } from './approval-gate';
 
 export type McpTransport = 'stdio' | 'sse' | 'websocket';
 export type McpStatus = 'connected' | 'connecting' | 'disconnected' | 'error';
@@ -48,6 +51,12 @@ interface Connection {
     pending: Map<number, PendingRequest>;
     nextId: number;
     buffer: string;
+}
+
+interface McpToolCallContext {
+    tenantId?: string;
+    agentId?: string;
+    runId?: string;
 }
 
 const CONFIG_PATH = path.join(process.env.WORKSPACE_ROOT ?? process.cwd(), '.mcp.json');
@@ -212,11 +221,38 @@ class McpManager {
         this.connections.delete(id);
     }
 
-    async callTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+    async callTool(serverId: string, toolName: string, args: Record<string, unknown>, ctx: McpToolCallContext = {}): Promise<unknown> {
         const conn = this.connections.get(serverId);
         if (!conn || conn.status !== 'connected') throw new Error(`Server ${serverId} is not connected`);
-        const result = await this.rpc(conn, 'tools/call', { name: toolName, arguments: args });
-        return result;
+
+        const tenantId = ctx.tenantId ?? 'user_demo';
+        const agentId = ctx.agentId ?? '';
+        const runId = ctx.runId ?? '';
+        const toolId = `mcp:${serverId}:${toolName}`;
+        const start = Date.now();
+        const decision = policyEngine.evaluate({ toolId, agentId, runId, tenantId, input: args });
+
+        auditLog.append({ tenantId, event: 'tool:call', agentId, runId, toolId, decision: decision.action, policyId: decision.policyId, metadata: { serverId, toolName, reason: decision.reason } });
+
+        if (decision.action === 'deny') {
+            auditLog.append({ tenantId, event: 'tool:rejected', agentId, runId, toolId, policyId: decision.policyId, metadata: { serverId, toolName, reason: decision.reason, durationMs: Date.now() - start } });
+            throw new Error(`[GOVERNANCE BLOCK] ${decision.reason}`);
+        }
+
+        if (decision.action === 'require-approval') {
+            const approved = await approvalGate.request({ tenantId, runId, agentId, toolId, input: args, policyId: decision.policyId, reason: decision.reason });
+            auditLog.append({ tenantId, event: approved ? 'tool:approved' : 'tool:rejected', agentId, runId, toolId, policyId: decision.policyId, metadata: { serverId, toolName, durationMs: Date.now() - start } });
+            if (!approved) throw new Error('[GOVERNANCE REJECTED] MCP tool call rejected or timed out.');
+        }
+
+        try {
+            const result = await this.rpc(conn, 'tools/call', { name: toolName, arguments: args });
+            auditLog.append({ tenantId, event: 'tool:completed', agentId, runId, toolId, policyId: decision.policyId, metadata: { serverId, toolName, durationMs: Date.now() - start } });
+            return result;
+        } catch (err: unknown) {
+            auditLog.append({ tenantId, event: 'tool:failed', agentId, runId, toolId, policyId: decision.policyId, metadata: { serverId, toolName, durationMs: Date.now() - start, error: err instanceof Error ? err.message : String(err) } });
+            throw err;
+        }
     }
 
     private handleLine(conn: Connection, line: string): void {
