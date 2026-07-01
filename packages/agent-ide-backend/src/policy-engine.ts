@@ -6,7 +6,7 @@ export type PolicyDecisionAction = 'allow' | 'deny' | 'require-approval';
 
 export interface PolicyRule {
     id:       string;
-    tools:    string[];           // exact tool ids or '*' wildcard
+    tools:    string[];           // exact tool ids, '*' wildcard, or prefix wildcards like 'mcp:*'
     action:   PolicyDecisionAction;
     reason:   string;
 }
@@ -43,16 +43,24 @@ const STORE_PATH = path.join(process.env.WORKSPACE_ROOT ?? process.cwd(), '.poli
 
 const BUILTIN_POLICIES: Omit<Policy, 'tenantId'>[] = [
     {
-        id: 'builtin-tool-safety', name: 'Tool Safety', description: 'Shell and code execution require approval; system paths are blocked.',
+        id: 'builtin-tool-safety', name: 'Tool Safety', description: 'Shell, code, database, and MCP execution require approval by default.',
         enabled: true, priority: 1, version: 1,
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         rules: [
             { id: 'r-shell',    tools: ['shell', 'code_exec'], action: 'require-approval', reason: 'Shell and code execution require human approval.' },
-            { id: 'r-db',       tools: ['db_query'],           action: 'require-approval', reason: 'Database writes require human approval.' },
+            { id: 'r-db',       tools: ['db_query'],           action: 'require-approval', reason: 'Database access requires human approval.' },
+            { id: 'r-mcp',      tools: ['mcp:*'],              action: 'require-approval', reason: 'MCP tool execution requires human approval.' },
             { id: 'r-allow-*',  tools: ['*'],                  action: 'allow',             reason: 'All other tools are allowed by default.' },
         ],
     },
 ];
+
+function toolPatternMatches(pattern: string, toolId: string): boolean {
+    if (pattern === '*') return true;
+    if (pattern === toolId) return true;
+    if (pattern.endsWith('*')) return toolId.startsWith(pattern.slice(0, -1));
+    return false;
+}
 
 class PolicyEngine {
     private policies = new Map<string, Policy>();
@@ -119,7 +127,7 @@ class PolicyEngine {
         const policies = this.list(ctx.tenantId).filter(p => p.enabled);
         for (const policy of policies) {
             for (const rule of policy.rules) {
-                const matches = rule.tools.some(t => t === '*' || t === ctx.toolId);
+                const matches = rule.tools.some(t => toolPatternMatches(t, ctx.toolId));
                 if (!matches) continue;
                 return { action: rule.action, policyId: policy.id, ruleId: rule.id, reason: rule.reason };
             }

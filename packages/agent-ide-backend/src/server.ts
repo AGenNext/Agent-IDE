@@ -208,9 +208,15 @@ app.get('/api/mcp/tools', (_req, res) => {
 // POST /api/mcp/tools/:serverId/:toolName/call — call a tool on a connected server
 app.post('/api/mcp/tools/:serverId/:toolName/call', async (req: Request, res: Response) => {
     const { serverId = '', toolName = '' } = req.params;
-    const args = (req.body as { args?: Record<string, unknown> }).args ?? req.body as Record<string, unknown>;
+    const user = (req as AuthedRequest).user;
+    const body = req.body as { args?: Record<string, unknown>; agentId?: string; runId?: string };
+    const args = body.args ?? req.body as Record<string, unknown>;
     try {
-        const result = await mcpManager.callTool(serverId, toolName, args);
+        const result = await mcpManager.callTool(serverId, toolName, args, {
+            tenantId: user.userId,
+            agentId: body.agentId,
+            runId: body.runId,
+        });
         res.json({ success: true, result });
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
