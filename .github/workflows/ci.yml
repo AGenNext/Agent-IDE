@@ -2,16 +2,30 @@ name: CI
 
 on:
   push:
-    branches: [main, "feature/**", "claude/**"]
+    branches:
+      - main
+      - "feature/**"
+      - "claude/**"
+      - "post-merge-**"
   pull_request:
-    branches: [main]
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build & Typecheck
+  validate:
+    name: Validate workspace
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -25,21 +39,65 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build agent-ide-types
-        run: yarn --cwd packages/agent-ide-types build
+      - name: Build all workspaces
+        run: yarn build
 
-      - name: Build agent-ide-backend
-        run: yarn --cwd packages/agent-ide-backend build
+      - name: Typecheck all workspaces
+        run: yarn typecheck
 
-      - name: Build agent-ide-core extension
-        run: yarn --cwd extensions/agent-ide-core build
+      - name: Lint all workspaces
+        run: yarn lint
 
-      - name: Typecheck extension
-        run: yarn --cwd extensions/agent-ide-core typecheck
+  container:
+    name: Build container
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Typecheck backend
-        run: yarn --cwd packages/agent-ide-backend typecheck
+      - name: Build container image
+        run: docker build -f Containerfile -t agent-ide:ci .
 
-      - name: Lint extension
-        run: yarn --cwd extensions/agent-ide-core lint
-        continue-on-error: true
+  production-readiness:
+    name: Production readiness check
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify production readiness docs
+        run: |
+          test -f docs/THEIA_AI_INTEGRATION.md
+          test -f docs/PRODUCTION_READINESS.md
+
+      - name: Verify Theia AI dependency alignment
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const browser = JSON.parse(fs.readFileSync('applications/browser-app/package.json', 'utf8'));
+          const core = JSON.parse(fs.readFileSync('extensions/agent-ide-core/package.json', 'utf8'));
+          const expected = '1.73.0';
+          const required = [
+            '@theia/core',
+            '@theia/ai-core',
+            '@theia/ai-chat',
+            '@theia/ai-ide',
+            '@theia/ai-mcp',
+            '@theia/ai-terminal',
+            '@theia/ai-openai',
+            '@theia/ai-anthropic',
+            '@theia/ai-google',
+            '@theia/ai-ollama'
+          ];
+          const failures = [];
+          for (const pkg of required) {
+            if (browser.dependencies[pkg] !== expected) failures.push(`${pkg}=${browser.dependencies[pkg]}`);
+          }
+          if (core.dependencies['@theia/core'] !== expected) failures.push(`core-extension @theia/core=${core.dependencies['@theia/core']}`);
+          if (failures.length) {
+            console.error(`Theia dependency alignment failed: ${failures.join(', ')}`);
+            process.exit(1);
+          }
+          NODE
