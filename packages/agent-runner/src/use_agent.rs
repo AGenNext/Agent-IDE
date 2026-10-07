@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::fabric::FabricEvent;
 use crate::lifecycle::Stage;
+use crate::use_agent_workspace::{self as workspace, Workspace};
 
 const MAX_STEPS: usize = 20;
 
@@ -183,6 +184,20 @@ pub struct ExecResult {
     pub output: String,
     pub tests_run: u32,
     pub tests_failed: u32,
+    /// true only when a real test command ran to completion; false means skipped or blocked.
+    #[serde(default)]
+    pub executed: bool,
+    #[serde(default)]
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub timed_out: bool,
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// Whether the latest EditCode diff was applied before this run (None: no diff yet).
+    #[serde(default)]
+    pub patch_applied: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +237,13 @@ pub struct UseAgentRequest {
     #[serde(default)]
     pub dynamic: bool,
     pub task_type: Option<SeTaskType>,
+    /// Local checkout to work on. Must sit inside USEAGENT_WORKSPACE_ROOT.
+    /// With it, CodeRetrieval searches real code and ExecuteTests runs real tests.
+    #[serde(default)]
+    pub repo_path: Option<String>,
+    /// Test command as argv (no shell). Auto-detected from the repo when omitted.
+    #[serde(default)]
+    pub test_command: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -380,13 +402,8 @@ fn build_action_prompt(
              Perform Reproduction: Write a minimal reproduction script or test case.\n\
              Format your response as:\nREPRODUCTION_DIFF:\n```\n<diff content here>\n```"
         ),
-        SeAction::ExecuteTests => format!(
-            "Task: {task_description}\nProject Context:\n{project_context}\nCurrent State:\n{state_json}\n\
-             Test Locations: {test_locs:?}\n\n\
-             Perform ExecuteTests: Analyze what tests would pass/fail.\n\
-             Format your response as:\nEXEC_RESULT:\nPASSED: <true|false>\nTESTS_RUN: <number>\nTESTS_FAILED: <number>\nOUTPUT: <summary>",
-            test_locs = task_state.test_locations
-        ),
+        // ExecuteTests never goes to the LLM: see execute_tests().
+        SeAction::ExecuteTests => String::new(),
         SeAction::EditCode => format!(
             "Task: {task_description}\nProject Context:\n{project_context}\nCurrent State:\n{state_json}\n\
              Code Locations: {code_locs:?}\nExec Results: {exec_summary}\n\n\
@@ -462,15 +479,8 @@ fn apply_action_output(action: &SeAction, output: &str, state: &mut TaskState) {
                 created_at: Utc::now(), source_action: "Reproduction".to_string(),
             });
         }
-        SeAction::ExecuteTests => {
-            let passed = output.contains("PASSED: true");
-            let tests_run = parse_labeled_u32(output, "TESTS_RUN:");
-            let tests_failed = parse_labeled_u32(output, "TESTS_FAILED:");
-            let out_summary = extract_after_label(output, "OUTPUT:").unwrap_or_else(|| output.to_string());
-            state.exec_results.push(ExecResult {
-                timestamp: Utc::now(), passed, output: out_summary, tests_run, tests_failed,
-            });
-        }
+        // Written directly by execute_tests(), never parsed from LLM text.
+        SeAction::ExecuteTests => {}
         SeAction::EditCode => {
             let content = extract_code_block(output, "CODE_DIFF:").unwrap_or_else(|| output.to_string());
             state.diff_store.push(Diff {
@@ -504,17 +514,84 @@ fn extract_code_block(text: &str, after_label: &str) -> Option<String> {
     Some(remainder.trim().to_string())
 }
 
-fn extract_after_label(text: &str, label: &str) -> Option<String> {
-    let start = text.find(label)?;
-    let remainder = &text[start + label.len()..];
-    let end = remainder.find('\n').unwrap_or(remainder.len());
-    Some(remainder[..end].trim().to_string())
+// ── Real actions: CodeRetrieval + ExecuteTests against a local checkout ─────
+
+const CODE_RETRIEVAL_LIMIT: usize = 10;
+
+/// CodeRetrieval backed by code search over the workspace. Writes Lc directly.
+async fn retrieve_code(ws: &Workspace, task_description: &str, task_state: &mut TaskState) -> String {
+    let (ws2, query) = (ws.clone(), task_description.to_string());
+    let hits = tokio::task::spawn_blocking(move || workspace::search_code(&ws2, &query, CODE_RETRIEVAL_LIMIT))
+        .await
+        .unwrap_or_default();
+    task_state.code_locations = hits.iter().map(|h| h.location()).collect();
+    if hits.is_empty() {
+        return format!(
+            "LOCATIONS:\n[]\nNo code in {} matched terms {:?}.",
+            ws.root.display(), workspace::extract_terms(task_description)
+        );
+    }
+    let detail = hits.iter()
+        .map(|h| format!("{:>7.3}  {}", h.score, h.location()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "LOCATIONS:\n{}\n\nSearched {} for {:?}:\n{detail}",
+        serde_json::to_string(&task_state.code_locations).unwrap_or_default(),
+        ws.root.display(),
+        workspace::extract_terms(task_description),
+    )
 }
 
-fn parse_labeled_u32(text: &str, label: &str) -> u32 {
-    extract_after_label(text, label)
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0)
+/// ExecuteTests: run the real test harness and record exit code + output in Rexec.
+/// Without a workspace or with execution disabled, records a skipped (not passed) result.
+async fn execute_tests(ws: Option<&Workspace>, test_command: Option<Vec<String>>, task_state: &mut TaskState) -> String {
+    let skip = |reason: &str, task_state: &mut TaskState| {
+        task_state.exec_results.push(ExecResult {
+            timestamp: Utc::now(), passed: false, output: format!("skipped: {reason}"),
+            tests_run: 0, tests_failed: 0, executed: false, command: vec![], exit_code: None,
+            timed_out: false, duration_ms: 0, patch_applied: None,
+        });
+        format!("EXEC_RESULT:\nSKIPPED: {reason}")
+    };
+    let Some(ws) = ws else {
+        return skip("no repo_path in the request, so there is nothing to run", task_state);
+    };
+    if !workspace::test_exec_allowed() {
+        return skip("test execution is disabled (set USEAGENT_ALLOW_TEST_EXEC=true)", task_state);
+    }
+
+    let patch = task_state.diff_store.iter().rev()
+        .find(|d| d.kind == DiffKind::Code)
+        .map(|d| d.content.clone());
+    let run = workspace::run_tests(ws, test_command, patch.as_deref()).await;
+
+    let output = match &run.error {
+        Some(e) if run.output_tail.is_empty() => e.clone(),
+        Some(e) => format!("{e}\n{}", run.output_tail),
+        None => run.output_tail.clone(),
+    };
+    task_state.exec_results.push(ExecResult {
+        timestamp: Utc::now(),
+        passed: run.passed(),
+        output: output.clone(),
+        tests_run: run.tests_run,
+        tests_failed: run.tests_failed,
+        executed: run.exit_code.is_some(),
+        command: run.command.clone(),
+        exit_code: run.exit_code,
+        timed_out: run.timed_out,
+        duration_ms: run.duration_ms,
+        patch_applied: run.patch_applied,
+    });
+    format!(
+        "EXEC_RESULT:\nCOMMAND: {}\nEXIT_CODE: {}\nPASSED: {}\nTESTS_RUN: {}\nTESTS_FAILED: {}\nPATCH_APPLIED: {}\nDURATION_MS: {}\nOUTPUT:\n{output}",
+        run.command.join(" "),
+        run.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "none".into()),
+        run.passed(), run.tests_run, run.tests_failed,
+        run.patch_applied.map(|p| p.to_string()).unwrap_or_else(|| "n/a".into()),
+        run.duration_ms,
+    )
 }
 
 // ── Main Entry Point ──────────────────────────────────────────────────────────
@@ -523,6 +600,15 @@ pub async fn execute_use_agent(state: Arc<AppState>, req: UseAgentRequest) -> Us
     let task_type = req.task_type.unwrap_or_else(|| SeTaskType::from_description(&req.task_description));
     let project_context = req.project_context.unwrap_or_default();
     let dynamic = req.dynamic;
+
+    let ws = match req.repo_path.as_deref().map(workspace::resolve).transpose() {
+        Ok(ws) => ws,
+        Err(e) => return UseAgentResponse {
+            status: UseAgentStatus::Failed, task_type, steps_taken: 0, final_diff: None,
+            task_state: TaskState::default(), action_history: Vec::new(),
+            message: format!("USEagent could not open the workspace: {e}"),
+        },
+    };
 
     let mut task_state = TaskState::default();
     let mut action_history: Vec<ActionRecord> = Vec::new();
@@ -577,8 +663,15 @@ pub async fn execute_use_agent(state: Arc<AppState>, req: UseAgentRequest) -> Us
             break;
         }
 
-        let output = execute_action(&state, &action, &task_state, &req.task_description, &project_context).await;
-        apply_action_output(&action, &output, &mut task_state);
+        let output = match (&action, &ws) {
+            (SeAction::CodeRetrieval, Some(ws)) => retrieve_code(ws, &req.task_description, &mut task_state).await,
+            (SeAction::ExecuteTests, _) => execute_tests(ws.as_ref(), req.test_command.clone(), &mut task_state).await,
+            _ => {
+                let output = execute_action(&state, &action, &task_state, &req.task_description, &project_context).await;
+                apply_action_output(&action, &output, &mut task_state);
+                output
+            }
+        };
         action_history.push(ActionRecord {
             step, action: action.clone(), output: output.clone(), timestamp: Utc::now(),
         });

@@ -42,6 +42,7 @@ const KNOWN_PREFIXES: &[&str] = &[
     "/api/mcp", "/api/aip", "/api/feedback", "/api/blockchain",
     "/api/storage", "/api/govgraph", "/api/computekube", "/api/goals",
     "/api/dashboard", "/api/plugins", "/api/search", "/api/optin",
+    "/api/use-agent",
     "/ws", "/transfer", "/mcp",
 ];
 
