@@ -68,7 +68,7 @@ pub async fn security_headers(req: Request, next: Next) -> Response {
 
     // Tag every response with platform identifier (non-sensitive)
     headers.insert("x-powered-by",
-        HeaderValue::from_static("Autonomyx — openautonomyx.com"));
+        HeaderValue::from_static("Autonomyx - openautonomyx.com"));
 
     // Remove server fingerprint (don't advertise what we're running)
     headers.remove("server");

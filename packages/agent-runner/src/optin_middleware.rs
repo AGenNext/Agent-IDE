@@ -43,10 +43,16 @@ const KNOWN_PREFIXES: &[&str] = &[
     "/api/storage", "/api/govgraph", "/api/computekube", "/api/goals",
     "/api/dashboard", "/api/plugins", "/api/search", "/api/optin",
     "/ws", "/transfer", "/mcp",
+    // Routes the embedded dashboard (static/landing.html) calls
+    "/echarts.min.js", "/api/use-agent", "/api/mega", "/api/providers", "/api/config",
 ];
 
+// Exact-match routes — "/" can't be a prefix without passing everything through.
+const KNOWN_EXACT: &[&str] = &["/"];
+
 fn is_known(path: &str) -> bool {
-    KNOWN_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
+    KNOWN_EXACT.contains(&path)
+        || KNOWN_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
 }
 
 // ── Gap-filler middleware ─────────────────────────────────────────────────────
