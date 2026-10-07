@@ -601,9 +601,22 @@ pub async fn execute_use_agent(state: Arc<AppState>, req: UseAgentRequest) -> Us
         .or_else(|| task_state.diff_store.last())
         .map(|d| d.content.clone());
 
+    // A run whose last real test run failed did not succeed, whatever the
+    // action sequence says.
+    let last_failed_run = task_state.exec_results.last().filter(|r| r.executed && !r.passed);
+    let status = if status == UseAgentStatus::Success && last_failed_run.is_some() {
+        UseAgentStatus::Failed
+    } else {
+        status
+    };
+
     let message = match &status {
         UseAgentStatus::Success => format!("USEagent completed successfully in {} steps.", step + 1),
-        UseAgentStatus::Failed => "USEagent encountered a failure.".to_string(),
+        UseAgentStatus::Failed => match last_failed_run {
+            Some(r) => format!("USEagent finished, but the last test run failed ({} of {} tests failed, exit code {}).",
+                r.tests_failed, r.tests_run, r.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "none".into())),
+            None => "USEagent encountered a failure.".to_string(),
+        },
         UseAgentStatus::MaxStepsReached => format!("USEagent reached maximum steps ({MAX_STEPS})."),
     };
 
