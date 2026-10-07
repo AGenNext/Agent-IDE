@@ -1,4 +1,4 @@
-// Opt-in gap-filler middleware — fills the gaps between gates.
+// Opt-in gap-filler — fills the gaps between gates.
 //
 // The fabric fills structural gaps. This middleware fills runtime gaps:
 // any request that reaches an undefined or unknown capability is not rejected —
@@ -23,7 +23,6 @@
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode},
-    middleware::Next,
     extract::State,
 };
 use std::sync::Arc;
@@ -34,36 +33,15 @@ use crate::lifecycle::Stage;
 
 // ── Gap signals ───────────────────────────────────────────────────────────────
 
-// Known capability prefixes — requests to these are always passed through.
-const KNOWN_PREFIXES: &[&str] = &[
-    "/health", "/api/agents", "/api/runs", "/api/apps", "/api/peers",
-    "/api/lifecycle", "/api/fabric", "/api/tools", "/api/infra",
-    "/api/usage", "/api/platform", "/api/onboarding", "/api/support",
-    "/api/mcp", "/api/aip", "/api/feedback", "/api/blockchain",
-    "/api/storage", "/api/govgraph", "/api/computekube", "/api/goals",
-    "/api/dashboard", "/api/plugins", "/api/search", "/api/optin",
-    "/ws", "/transfer", "/mcp",
-];
+// ── Gap-filler fallback ───────────────────────────────────────────────────────
 
-fn is_known(path: &str) -> bool {
-    KNOWN_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
-}
-
-// ── Gap-filler middleware ─────────────────────────────────────────────────────
-
-pub async fn optin_gap_filler(
-    req: Request<Body>,
-    next: Next,
-) -> Response<Body> {
+/// Router fallback: runs only when no registered route matched, so every
+/// mounted router is reachable without keeping a list of known prefixes.
+pub async fn optin_gap_filler(req: Request<Body>) -> Response<Body> {
     let path   = req.uri().path().to_string();
     let method = req.method().clone();
 
-    // Pass through all known routes immediately
-    if is_known(&path) {
-        return next.run(req).await;
-    }
-
-    // Unknown path — this is a gap.
+    // No route matched — this is a gap.
     // We cannot access state here without extracting it, so we emit a structured gap response.
     // The contract: unknown routes get a gap response, not a 404.
     let gap_kind = if path.contains("capability") || path.contains("compute") {
