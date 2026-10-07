@@ -46,12 +46,22 @@ pub async fn security_headers(req: Request, next: Next) -> Response {
     headers.insert("referrer-policy",
         HeaderValue::from_static("strict-origin-when-cross-origin"));
 
-    // Restrict API access to same origin + explicit CORS allowlist
-    // Content-Security-Policy: API only — no scripts, no inline content
+    // Content-Security-Policy: API responses get no scripts and no inline
+    // content. The dashboard page (the only HTML response) needs its own
+    // same-origin scripts, inline script/styles, the live WebSocket and the
+    // Metabase iframe, so it gets a page policy instead.
+    let is_html = headers.get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.starts_with("text/html"))
+        .unwrap_or(false);
     headers.insert("content-security-policy",
-        HeaderValue::from_static(
+        HeaderValue::from_static(if is_html {
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; connect-src 'self' ws: wss:; frame-src http: https:; \
+             frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        } else {
             "default-src 'none'; frame-ancestors 'none'"
-        ));
+        }));
 
     // HSTS — force HTTPS for 1 year (only effective when behind TLS)
     // Set MAX_AGE_SECS=0 in env to disable (e.g. local dev without TLS)
