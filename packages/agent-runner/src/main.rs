@@ -54,6 +54,7 @@ mod theory;
 mod scale;
 mod mega_agent;
 mod use_agent;
+mod use_agent_exec;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
@@ -257,6 +258,8 @@ async fn main() {
         .nest("/api", routes::mega_agent::router(state.clone()))
         // USEagent — Unified Software Engineering Agent (ICSE '26)
         .nest("/api", routes::use_agent::router(state.clone()))
+        // Gap: requests no route matched → opt-in flow (structured 404)
+        .fallback(optin_middleware::optin_gap_filler)
         // ── Middleware stack (applied outer-in) ──────────────────────────────
         // Layer order: last added = outermost (first to run on request, last on response)
         .layer(middleware::from_fn({
@@ -277,7 +280,6 @@ async fn main() {
             }
         }))                                                        // 4. rate: per-IP token bucket
         .layer(middleware::from_fn(hardening::request_guard))     // 3. guard: path + size check
-        .layer(middleware::from_fn(optin_middleware::optin_gap_filler)) // 2. gap: unknown routes → optin
         .layer(middleware::from_fn(hardening::security_headers))  // 1. headers: HSTS, CSP, X-Frame
         .layer(DefaultBodyLimit::max(body_limit_bytes))           //    body: 4MB hard cap
         .layer(TimeoutLayer::new(Duration::from_secs(request_timeout_secs))) // timeout: 30s
