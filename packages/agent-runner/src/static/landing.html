@@ -92,6 +92,15 @@ pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;paddi
 .tr-arrow{color:var(--muted)}
 .tr-condition{color:var(--subtle);flex:1;font-style:italic}
 
+/* ── USEagent ───────────────────────────────────────────────────── */
+#ua-chart{width:100%;height:240px;background:var(--bg3);border:1px solid var(--border);border-radius:10px}
+.ua-step{border:1px solid var(--border);border-radius:7px;background:var(--bg3);margin:4px 0}
+.ua-step summary{display:flex;gap:10px;align-items:center;padding:7px 10px;cursor:pointer;font-size:.76rem;list-style:none}
+.ua-step summary::-webkit-details-marker{display:none}
+.ua-step pre{margin:0 10px 10px;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.ua-err{color:var(--red)}
+.ua-loc{display:block;padding:2px 0;color:var(--sky)}
+
 /* ── Agent table ─────────────────────────────────────────────────── */
 table{width:100%;border-collapse:collapse;font-size:.8rem}
 th{text-align:left;padding:8px 12px;font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border)}
@@ -130,6 +139,7 @@ tr:hover td{background:var(--bg3)}
   <div class="tab active" data-tab="graph">Architecture</div>
   <div class="tab" data-tab="dashboard">Dashboard</div>
   <div class="tab" data-tab="orchestrate">Orchestrate</div>
+  <div class="tab" data-tab="useagent">USEagent</div>
   <div class="tab" data-tab="fabric">Fabric</div>
   <div class="tab" data-tab="agents">Agents</div>
   <div class="tab" data-tab="config">Config</div>
@@ -207,6 +217,63 @@ tr:hover td{background:var(--bg3)}
       </div>
       <div id="fsm-chart"><div class="empty" style="padding-top:160px">Run an orchestration to visualize the FSM</div></div>
       <div id="fsm-agents" style="margin-top:14px;display:flex;flex-wrap:wrap;gap:8px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ USEAGENT ═══════════════════════════════════════════════════════ -->
+<div id="panel-useagent" class="panel">
+  <div class="grid2" style="gap:20px">
+    <div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="section-title">Run USEagent on an SE task</div>
+        <div style="margin-bottom:12px">
+          <label>Task description</label>
+          <textarea id="ua-task" rows="3" placeholder="e.g. Fix the off-by-one in pagination so the last page is returned"></textarea>
+        </div>
+        <div style="margin-bottom:12px">
+          <label>Project context (optional)</label>
+          <textarea id="ua-context" rows="3" class="mono" placeholder="Repo layout, relevant files, failing test output…"></textarea>
+        </div>
+        <div class="row" style="margin-bottom:14px">
+          <div>
+            <label>Task type</label>
+            <select id="ua-type"><option value="">Auto-detect from description</option></select>
+          </div>
+          <div>
+            <label>Action selection</label>
+            <select id="ua-mode">
+              <option value="false">Static — fixed sequence per task type</option>
+              <option value="true">Dynamic — Meta-Agent picks each action</option>
+            </select>
+          </div>
+        </div>
+        <div id="ua-type-desc" style="font-size:.75rem;color:var(--muted);margin-bottom:14px"></div>
+        <button class="btn btn-primary" id="ua-btn" onclick="runUseAgent()">&#9654; Run USEagent</button>
+        <span id="ua-elapsed" style="margin-left:12px;font-size:.75rem;color:var(--muted)"></span>
+      </div>
+
+      <div class="card" id="ua-result" style="display:none">
+        <div class="section-title">Result</div>
+        <div id="ua-stats" class="exec-stats"></div>
+        <div id="ua-message" style="font-size:.8rem;color:var(--subtle);margin-bottom:6px"></div>
+        <div class="section-title" style="margin-top:16px">Final Diff</div>
+        <pre id="ua-diff" style="white-space:pre-wrap;word-break:break-word;max-height:360px"></pre>
+        <div class="section-title" style="margin-top:16px">Task State S = (Lc, Lt, Rexec, DS)</div>
+        <div id="ua-state"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="section-title">Action Trace</div>
+        <div id="ua-chart"><div class="empty" style="padding-top:90px">Run USEagent to see its action trace</div></div>
+        <div id="ua-history" style="margin-top:12px"></div>
+      </div>
+      <div class="card">
+        <div class="section-title">SE Actions</div>
+        <div id="ua-actions"><div class="empty">Loading…</div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -330,6 +397,12 @@ tr:hover td{background:var(--bg3)}
       <div class="api-route"><span class="tag tag-get">GET</span><div><div class="api-path">/api/mega/agent-types</div><div class="api-desc">30 canonical agent types, 6 tiers</div></div></div>
     </div>
     <div class="api-group">
+      <h3>USEagent (SE)</h3>
+      <div class="api-route"><span class="tag tag-post">POST</span><div><div class="api-path">/api/use-agent/run</div><div class="api-desc">Run USEagent on an SE task</div></div></div>
+      <div class="api-route"><span class="tag tag-get">GET</span><div><div class="api-path">/api/use-agent/task-types</div><div class="api-desc">6 USEbench task types</div></div></div>
+      <div class="api-route"><span class="tag tag-get">GET</span><div><div class="api-path">/api/use-agent/actions</div><div class="api-desc">7 SE actions</div></div></div>
+    </div>
+    <div class="api-group">
       <h3>Lifecycle + Fabric</h3>
       <div class="api-route"><span class="tag tag-post">POST</span><div><div class="api-path">/api/lifecycle/:artifact/:stage</div><div class="api-desc">Open a gate</div></div></div>
       <div class="api-route"><span class="tag tag-get">GET</span><div><div class="api-path">/api/lifecycle/:artifact/:stage</div><div class="api-desc">Gate status</div></div></div>
@@ -374,6 +447,7 @@ let fabricEvents = [];
 let fabricChart  = null;
 let agentChart   = null;
 let fsmChart     = null;
+let uaChart      = null;
 let wsConn       = null;
 let eventCounter = 0;
 
@@ -400,6 +474,7 @@ document.querySelectorAll('.tab').forEach(t => {
     if (t.dataset.tab === 'fabric')   { ensureWs(); }
     if (t.dataset.tab === 'config')   { loadConfig(); loadConfigDB(); }
     if (t.dataset.tab === 'dashboard'){ loadDashboard(); }
+    if (t.dataset.tab === 'useagent') { loadUseAgentMeta(); setTimeout(() => uaChart?.resize(), 0); }
   });
 });
 
@@ -684,6 +759,144 @@ function renderExecution(exec) {
   document.getElementById('exec-output').textContent = out;
 }
 
+// ── USEagent ─────────────────────────────────────────────────────────
+// Drives /api/use-agent/{task-types,actions,run}. Outputs are LLM text, so
+// everything rendered from a response goes through esc().
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const UA_ACTION_COLOR = {
+  CodeRetrieval:'#38bdf8', TestRetrieval:'#a78bfa', Reproduction:'#fb923c',
+  ExecuteTests:'#fbbf24', EditCode:'#4ade80', ReviewPatch:'#e879f9', Terminate:'#64748b',
+};
+// action names come back as snake_case in action_history, PascalCase from /actions
+const uaName = a => String(a).split('_').map(w => w[0].toUpperCase() + w.slice(1)).join('');
+let uaTaskTypes = null;
+
+async function loadUseAgentMeta() {
+  if (uaTaskTypes) return;
+  const [tt, ac] = await Promise.all([api('/api/use-agent/task-types'), api('/api/use-agent/actions')]);
+  if (tt?.task_types) {
+    uaTaskTypes = tt.task_types;
+    const sel = document.getElementById('ua-type');
+    sel.innerHTML = '<option value="">Auto-detect from description</option>' +
+      uaTaskTypes.map(t => `<option value="${esc(t.variant)}">${esc(uaName(t.variant))}</option>`).join('');
+    sel.onchange = () => {
+      const t = uaTaskTypes.find(x => x.variant === sel.value);
+      document.getElementById('ua-type-desc').textContent = t ? t.description : '';
+    };
+  }
+  const el = document.getElementById('ua-actions');
+  el.innerHTML = ac?.actions?.length
+    ? ac.actions.map(a => `
+      <div class="transition-row">
+        <span class="tr-kind" style="color:${UA_ACTION_COLOR[a.name]||'var(--muted)'};min-width:100px">${esc(a.name)}</span>
+        <span class="tr-condition" style="font-style:normal">${esc(a.description)}</span>
+      </div>`).join('')
+    : '<div class="empty">Could not load /api/use-agent/actions</div>';
+}
+
+async function runUseAgent() {
+  const task_description = document.getElementById('ua-task').value.trim();
+  if (!task_description) { document.getElementById('ua-task').focus(); return; }
+  const body = {
+    task_description,
+    project_context: document.getElementById('ua-context').value.trim() || null,
+    dynamic: document.getElementById('ua-mode').value === 'true',
+  };
+  const tt = document.getElementById('ua-type').value;
+  if (tt) body.task_type = tt;
+
+  const btn = document.getElementById('ua-btn');
+  const elapsed = document.getElementById('ua-elapsed');
+  const t0 = Date.now();
+  const tick = setInterval(() => { elapsed.textContent = `running… ${Math.round((Date.now()-t0)/1000)}s`; }, 500);
+  btn.disabled = true; btn.textContent = '⏳ Running…';
+
+  const res = await api('/api/use-agent/run', {method:'POST', body: JSON.stringify(body)});
+
+  clearInterval(tick);
+  btn.disabled = false; btn.innerHTML = '&#9654; Run USEagent';
+  if (!res) { elapsed.innerHTML = '<span class="ua-err">Run failed — check runner logs</span>'; return; }
+  elapsed.textContent = `finished in ${((Date.now()-t0)/1000).toFixed(1)}s`;
+  renderUseAgent(res);
+}
+
+function renderUseAgent(res) {
+  document.getElementById('ua-result').style.display = 'block';
+  const history = res.action_history || [];
+  const errors  = history.filter(h => /^Action execution error/.test(h.output || '')).length;
+  const ts      = res.task_state || {};
+  const statusColor = res.status === 'success' && !errors ? 'var(--green)' : res.status === 'success' ? 'var(--amber)' : 'var(--red)';
+
+  document.getElementById('ua-stats').innerHTML = `
+    <div class="exec-stat"><div class="v" style="color:${statusColor}">${esc(res.status)}</div><div class="k">Status</div></div>
+    <div class="exec-stat"><div class="v" style="font-size:.95rem;padding-top:6px">${esc(uaName(res.task_type||'—'))}</div><div class="k">Task type</div></div>
+    <div class="exec-stat"><div class="v">${res.steps_taken ?? 0}</div><div class="k">Steps</div></div>
+    <div class="exec-stat"><div class="v">${(ts.diff_store||[]).length}</div><div class="k">Diffs</div></div>
+    <div class="exec-stat"><div class="v" style="color:${errors?'var(--red)':'var(--muted)'}">${errors}</div><div class="k">Action errors</div></div>`;
+  document.getElementById('ua-message').innerHTML = esc(res.message) +
+    (errors ? ` <span class="ua-err">${errors} action(s) returned an LLM error — check the provider config and API key.</span>` : '');
+  document.getElementById('ua-diff').textContent = res.final_diff || '(no diff produced)';
+
+  const locs = (title, arr) => `<div style="margin-bottom:10px"><label>${title}</label>${
+    (arr||[]).length ? arr.map(l => `<span class="ua-loc mono">${esc(l)}</span>`).join('') : '<span style="font-size:.75rem;color:var(--muted)">none</span>'}</div>`;
+  const execs = (ts.exec_results||[]).map(r => `
+    <div class="transition-row">
+      <span class="tr-kind" style="color:${r.passed?'var(--green)':'var(--red)'}">${r.passed?'passed':'failed'}</span>
+      <span class="tr-iter">${r.tests_run} run / ${r.tests_failed} failed</span>
+      <span class="tr-condition">${esc(r.output)}</span>
+    </div>`).join('');
+  const diffs = (ts.diff_store||[]).map(d => `
+    <details class="ua-step"><summary><span class="tag" style="background:var(--bg);color:var(--sky)">${esc(d.kind)}</span>
+      <span style="color:var(--muted)">from ${esc(d.source_action)}</span></summary><pre>${esc(d.content)}</pre></details>`).join('');
+  document.getElementById('ua-state').innerHTML =
+    locs('Lc — code locations', ts.code_locations) +
+    locs('Lt — test locations', ts.test_locations) +
+    `<div style="margin-bottom:10px"><label>Rexec — execution results</label>${execs || '<span style="font-size:.75rem;color:var(--muted)">none</span>'}</div>` +
+    `<div><label>DS — diff store</label>${diffs || '<span style="font-size:.75rem;color:var(--muted)">empty</span>'}</div>`;
+
+  document.getElementById('ua-history').innerHTML = history.map(h => {
+    const name = uaName(h.action);
+    const err  = /^Action execution error/.test(h.output || '');
+    return `<details class="ua-step"><summary>
+      <span class="tr-iter">#${h.step}</span>
+      <span style="color:${UA_ACTION_COLOR[name]||'var(--muted)'};font-weight:600;min-width:100px">${esc(name)}</span>
+      <span class="${err?'ua-err':''}" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${err?'':'color:var(--muted)'}">${esc((h.output||'').split('\n')[0].slice(0,90))}</span>
+    </summary><pre>${esc(h.output)}</pre></details>`;
+  }).join('');
+
+  renderUseAgentChart(history);
+}
+
+function renderUseAgentChart(history) {
+  const el = document.getElementById('ua-chart');
+  if (!uaChart) { el.innerHTML = ''; uaChart = echarts.init(el, 'dark'); }
+  const gap = history.length > 1 ? 100 / (history.length - 1) : 0;
+  const nodes = history.map((h, i) => {
+    const name = uaName(h.action);
+    const err  = /^Action execution error/.test(h.output || '');
+    return {
+      id: String(i), name: `#${h.step} ${name}`, x: i * gap, y: i % 2 ? 18 : 0,
+      symbol: name === 'Terminate' ? 'diamond' : 'circle',
+      symbolSize: name === 'Terminate' ? 26 : 30,
+      itemStyle: {color: UA_ACTION_COLOR[name] || '#64748b', borderColor: err ? '#f87171' : '#0a0a0f', borderWidth: err ? 3 : 1},
+      label: {show: true, position: i % 2 ? 'bottom' : 'top', formatter: `{a|#${h.step}}\n{b|${name}}`,
+        rich: {a: {fontSize: 9, color: '#64748b'}, b: {fontSize: 10, color: '#e2e8f0', fontWeight: 600}}},
+      output: (h.output || '').slice(0, 240),
+    };
+  });
+  const edges = history.slice(1).map((_, i) => ({source: String(i), target: String(i + 1)}));
+  uaChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {formatter: p => p.dataType === 'node' ? `<b>${esc(p.data.name)}</b><br><span style="white-space:pre-wrap">${esc(p.data.output)}</span>` : ''},
+    series: [{
+      type: 'graph', layout: 'none', roam: true, left: 50, right: 50, top: 60, bottom: 60,
+      edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 8,
+      lineStyle: {color: '#334155', width: 1.5},
+      nodes, edges,
+    }],
+  }, true);
+}
+
 // ── Agents ────────────────────────────────────────────────────────────
 async function loadAgents() {
   const data = await api('/api/agents');
@@ -779,6 +992,7 @@ function initArchGraph() {
     { name: 'DevOps / Infra',      itemStyle: { color: '#fb923c' } },
     { name: 'Identity / Trust',    itemStyle: { color: '#f87171' } },
     { name: 'Events / Streaming',  itemStyle: { color: '#a78bfa' } },
+    { name: 'USEagent (SE)',       itemStyle: { color: '#2dd4bf' } },
   ];
 
   function n(name, cat, size, symbol) {
@@ -854,6 +1068,20 @@ function initArchGraph() {
     n('WS /ws/stream',  7, 26),
     n('Broadcast\nChannel', 7, 26),
     n('NATS\n(planned)', 7, 22),
+
+    // ── USEagent — unified SE agent, ICSE '26 (cat 8) ─────────────────
+    n('USEagent',               8, 38, 'roundRect'),
+    n('Meta-Agent\n(dynamic)',  8, 28),
+    n('Static\nSequence',       8, 24),
+    n('Task State\nS=(Lc,Lt,Rexec,DS)', 8, 28, 'diamond'),
+    n('USEbench\nTask Types (6)', 8, 26),
+    n('CodeRetrieval',          8, 20),
+    n('TestRetrieval',          8, 20),
+    n('Reproduction',           8, 20),
+    n('ExecuteTests',           8, 20),
+    n('EditCode',               8, 20),
+    n('ReviewPatch',            8, 20),
+    n('Terminate',              8, 18),
   ];
 
   function e(src, tgt, lbl, w) {
@@ -941,6 +1169,25 @@ function initArchGraph() {
     e('install.sh',      'Docker CE',   'installs'),
     e('GHCR',            'Docker CE',   'image pull'),
     e('musl static\nbinary', 'Rust 2021', 'compiled from'),
+
+    // USEagent — POST /api/use-agent/run
+    e('Autonomyx\nPlatform', 'USEagent', 'SE tasks', 2),
+    e('landing.html\n(SPA)', 'USEagent', '/api/use-agent/run'),
+    e('USEagent', 'USEbench\nTask Types (6)', 'classifies'),
+    e('USEagent', 'Static\nSequence', 'dynamic=false'),
+    e('USEagent', 'Meta-Agent\n(dynamic)', 'dynamic=true'),
+    e('Meta-Agent\n(dynamic)', 'LlmConfig', 'picks next action'),
+    e('Static\nSequence', 'USEbench\nTask Types (6)', 'per-type plan'),
+    e('USEagent', 'Task State\nS=(Lc,Lt,Rexec,DS)', 'updates'),
+    e('USEagent', 'FabricEvent', 'emits per step'),
+    e('USEagent', 'CodeRetrieval', 'Lc'),
+    e('USEagent', 'TestRetrieval', 'Lt'),
+    e('USEagent', 'Reproduction', 'DS'),
+    e('USEagent', 'ExecuteTests', 'Rexec'),
+    e('USEagent', 'EditCode', 'DS'),
+    e('USEagent', 'ReviewPatch', 'DS'),
+    e('USEagent', 'Terminate', 'final diff'),
+    e('EditCode', 'LlmConfig', 'complete()'),
   ];
 
   chart.setOption({
@@ -1055,7 +1302,7 @@ async function loadQuickMetrics() {
 document.querySelector('[data-tab="metabase"]').addEventListener('click', loadQuickMetrics);
 
 window.addEventListener('resize', () => {
-  fsmChart?.resize(); fabricChart?.resize(); agentChart?.resize();
+  fsmChart?.resize(); fabricChart?.resize(); agentChart?.resize(); uaChart?.resize();
 });
 </script>
 </body>
