@@ -235,6 +235,16 @@ tr:hover td{background:var(--bg3)}
           <label>Project context (optional)</label>
           <textarea id="ua-context" rows="3" class="mono" placeholder="Repo layout, relevant files, failing test output…"></textarea>
         </div>
+        <div class="row" style="margin-bottom:12px">
+          <div>
+            <label>Repo path on the runner (optional)</label>
+            <input id="ua-repo" class="mono" placeholder="/workspace/my-repo">
+          </div>
+          <div>
+            <label>Test command (optional)</label>
+            <input id="ua-testcmd" class="mono" placeholder="cargo test">
+          </div>
+        </div>
         <div class="row" style="margin-bottom:14px">
           <div>
             <label>Task type</label>
@@ -804,6 +814,11 @@ async function runUseAgent() {
   };
   const tt = document.getElementById('ua-type').value;
   if (tt) body.task_type = tt;
+  // Real-execution fields; runners without them ignore unknown keys.
+  const repo = document.getElementById('ua-repo').value.trim();
+  const cmd  = document.getElementById('ua-testcmd').value.trim();
+  if (repo) body.repo_path = repo;
+  if (cmd)  body.test_command = cmd.split(/\s+/);
 
   const btn = document.getElementById('ua-btn');
   const elapsed = document.getElementById('ua-elapsed');
@@ -839,12 +854,22 @@ function renderUseAgent(res) {
 
   const locs = (title, arr) => `<div style="margin-bottom:10px"><label>${title}</label>${
     (arr||[]).length ? arr.map(l => `<span class="ua-loc mono">${esc(l)}</span>`).join('') : '<span style="font-size:.75rem;color:var(--muted)">none</span>'}</div>`;
-  const execs = (ts.exec_results||[]).map(r => `
+  // executed/command/exit_code/… only exist on runners that really run tests;
+  // without them a result is the LLM's prediction, so say so.
+  const execs = (ts.exec_results||[]).map(r => {
+    const how = r.executed === true
+      ? `<span class="tr-iter mono" title="${esc((r.command||[]).join(' '))}">ran: exit ${r.exit_code ?? '—'}${r.timed_out?' (timed out)':''} · ${r.duration_ms ?? 0}ms${r.patch_applied===true?' · patch applied':''}</span>`
+      : r.executed === false
+        ? '<span class="tr-iter" style="color:var(--amber)">not executed</span>'
+        : '<span class="tr-iter" style="color:var(--amber)">LLM-predicted</span>';
+    return `
     <div class="transition-row">
       <span class="tr-kind" style="color:${r.passed?'var(--green)':'var(--red)'}">${r.passed?'passed':'failed'}</span>
       <span class="tr-iter">${r.tests_run} run / ${r.tests_failed} failed</span>
+      ${how}
       <span class="tr-condition">${esc(r.output)}</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   const diffs = (ts.diff_store||[]).map(d => `
     <details class="ua-step"><summary><span class="tag" style="background:var(--bg);color:var(--sky)">${esc(d.kind)}</span>
       <span style="color:var(--muted)">from ${esc(d.source_action)}</span></summary><pre>${esc(d.content)}</pre></details>`).join('');
