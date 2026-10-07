@@ -183,6 +183,16 @@ pub struct ExecResult {
     pub output: String,
     pub tests_run: u32,
     pub tests_failed: u32,
+    /// False when no test command ran (execution disabled, no workspace, …);
+    /// `output` then says why.
+    #[serde(default)]
+    pub executed: bool,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +232,10 @@ pub struct UseAgentRequest {
     #[serde(default)]
     pub dynamic: bool,
     pub task_type: Option<SeTaskType>,
+    /// Project directory ExecuteTests runs the real test suite in, relative to
+    /// (or inside) USE_AGENT_WORKSPACE_ROOT.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -380,13 +394,8 @@ fn build_action_prompt(
              Perform Reproduction: Write a minimal reproduction script or test case.\n\
              Format your response as:\nREPRODUCTION_DIFF:\n```\n<diff content here>\n```"
         ),
-        SeAction::ExecuteTests => format!(
-            "Task: {task_description}\nProject Context:\n{project_context}\nCurrent State:\n{state_json}\n\
-             Test Locations: {test_locs:?}\n\n\
-             Perform ExecuteTests: Analyze what tests would pass/fail.\n\
-             Format your response as:\nEXEC_RESULT:\nPASSED: <true|false>\nTESTS_RUN: <number>\nTESTS_FAILED: <number>\nOUTPUT: <summary>",
-            test_locs = task_state.test_locations
-        ),
+        // ExecuteTests runs the real suite (use_agent_exec) and never reaches the model.
+        SeAction::ExecuteTests => String::new(),
         SeAction::EditCode => format!(
             "Task: {task_description}\nProject Context:\n{project_context}\nCurrent State:\n{state_json}\n\
              Code Locations: {code_locs:?}\nExec Results: {exec_summary}\n\n\
@@ -462,15 +471,8 @@ fn apply_action_output(action: &SeAction, output: &str, state: &mut TaskState) {
                 created_at: Utc::now(), source_action: "Reproduction".to_string(),
             });
         }
-        SeAction::ExecuteTests => {
-            let passed = output.contains("PASSED: true");
-            let tests_run = parse_labeled_u32(output, "TESTS_RUN:");
-            let tests_failed = parse_labeled_u32(output, "TESTS_FAILED:");
-            let out_summary = extract_after_label(output, "OUTPUT:").unwrap_or_else(|| output.to_string());
-            state.exec_results.push(ExecResult {
-                timestamp: Utc::now(), passed, output: out_summary, tests_run, tests_failed,
-            });
-        }
+        // ExecuteTests results are recorded directly by the main loop.
+        SeAction::ExecuteTests => {}
         SeAction::EditCode => {
             let content = extract_code_block(output, "CODE_DIFF:").unwrap_or_else(|| output.to_string());
             state.diff_store.push(Diff {
@@ -504,17 +506,16 @@ fn extract_code_block(text: &str, after_label: &str) -> Option<String> {
     Some(remainder.trim().to_string())
 }
 
-fn extract_after_label(text: &str, label: &str) -> Option<String> {
-    let start = text.find(label)?;
-    let remainder = &text[start + label.len()..];
-    let end = remainder.find('\n').unwrap_or(remainder.len());
-    Some(remainder[..end].trim().to_string())
-}
-
-fn parse_labeled_u32(text: &str, label: &str) -> u32 {
-    extract_after_label(text, label)
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0)
+fn render_exec_result(r: &ExecResult) -> String {
+    if !r.executed {
+        return r.output.clone();
+    }
+    format!(
+        "COMMAND: {}\nEXIT_CODE: {}\nPASSED: {}\nTESTS_RUN: {}\nTESTS_FAILED: {}\nDURATION_MS: {}\nOUTPUT:\n{}",
+        r.command.as_deref().unwrap_or(""),
+        r.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "none".into()),
+        r.passed, r.tests_run, r.tests_failed, r.duration_ms, r.output,
+    )
 }
 
 // ── Main Entry Point ──────────────────────────────────────────────────────────
@@ -577,8 +578,16 @@ pub async fn execute_use_agent(state: Arc<AppState>, req: UseAgentRequest) -> Us
             break;
         }
 
-        let output = execute_action(&state, &action, &task_state, &req.task_description, &project_context).await;
-        apply_action_output(&action, &output, &mut task_state);
+        let output = if action == SeAction::ExecuteTests {
+            let result = crate::use_agent_exec::run_tests(req.workspace.as_deref(), &task_state).await;
+            let output = render_exec_result(&result);
+            task_state.exec_results.push(result);
+            output
+        } else {
+            let output = execute_action(&state, &action, &task_state, &req.task_description, &project_context).await;
+            apply_action_output(&action, &output, &mut task_state);
+            output
+        };
         action_history.push(ActionRecord {
             step, action: action.clone(), output: output.clone(), timestamp: Utc::now(),
         });

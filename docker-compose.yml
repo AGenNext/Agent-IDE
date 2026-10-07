@@ -22,6 +22,10 @@ services:
       # Identity
       ACTOR_DID: "${ACTOR_DID:-did:autonomyx:runner}"
       NODE_DID:  "${NODE_DID:-did:autonomyx:node:0}"
+      # USEagent ExecuteTests: real test runs are off unless this points at a
+      # directory of project checkouts (mount it into the container too).
+      USE_AGENT_WORKSPACE_ROOT: "${USE_AGENT_WORKSPACE_ROOT:-}"
+      USE_AGENT_TEST_COMMAND: "${USE_AGENT_TEST_COMMAND:-}"
     volumes:
       - runner-data:/data
     restart: unless-stopped

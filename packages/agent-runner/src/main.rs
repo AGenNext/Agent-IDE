@@ -54,6 +54,7 @@ mod theory;
 mod scale;
 mod mega_agent;
 mod use_agent;
+mod use_agent_exec;
 
 use axum::{middleware, Router};
 use axum::extract::DefaultBodyLimit;
