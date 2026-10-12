@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::fabric::FabricEvent;
 use crate::lifecycle::Stage;
+use crate::use_agent_search as search;
 
 const MAX_STEPS: usize = 20;
 
@@ -232,8 +233,8 @@ pub struct UseAgentRequest {
     #[serde(default)]
     pub dynamic: bool,
     pub task_type: Option<SeTaskType>,
-    /// Project directory ExecuteTests runs the real test suite in, relative to
-    /// (or inside) USE_AGENT_WORKSPACE_ROOT.
+    /// Project directory CodeRetrieval searches and ExecuteTests runs the real
+    /// test suite in, relative to (or inside) USE_AGENT_WORKSPACE_ROOT.
     #[serde(default)]
     pub workspace: Option<String>,
 }
@@ -506,6 +507,40 @@ fn extract_code_block(text: &str, after_label: &str) -> Option<String> {
     Some(remainder.trim().to_string())
 }
 
+const CODE_RETRIEVAL_LIMIT: usize = 10;
+
+/// CodeRetrieval against a real workspace: code search writes Lc directly and
+/// the model is never asked to guess locations. Without a `workspace` in the
+/// request the caller keeps the model-based retrieval.
+async fn retrieve_code(workspace: &str, task_description: &str, task_state: &mut TaskState) -> String {
+    let root = match std::env::var("USE_AGENT_WORKSPACE_ROOT").ok().filter(|r| !r.trim().is_empty()) {
+        Some(r) => r,
+        None => return "Code search not run: set USE_AGENT_WORKSPACE_ROOT on the runner.".to_string(),
+    };
+    let dir = match crate::use_agent_exec::resolve_workspace(&root, workspace) {
+        Ok(d) => d,
+        Err(e) => return e.replacen("Tests not executed", "Code search not run", 1),
+    };
+    let (dir2, query) = (dir.clone(), task_description.to_string());
+    let hits = tokio::task::spawn_blocking(move || search::search_code(&dir2, &query, CODE_RETRIEVAL_LIMIT))
+        .await
+        .unwrap_or_default();
+    let terms = search::extract_terms(task_description);
+    task_state.code_locations = hits.iter().map(|h| h.location()).collect();
+    if hits.is_empty() {
+        return format!("LOCATIONS:\n[]\nNo code in {} matched terms {terms:?}.", dir.display());
+    }
+    let detail = hits.iter()
+        .map(|h| format!("{:>7.3}  {}", h.score, h.location()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "LOCATIONS:\n{}\n\nSearched {} for {terms:?}:\n{detail}",
+        serde_json::to_string(&task_state.code_locations).unwrap_or_default(),
+        dir.display(),
+    )
+}
+
 fn render_exec_result(r: &ExecResult) -> String {
     if !r.executed {
         return r.output.clone();
@@ -578,7 +613,9 @@ pub async fn execute_use_agent(state: Arc<AppState>, req: UseAgentRequest) -> Us
             break;
         }
 
-        let output = if action == SeAction::ExecuteTests {
+        let output = if let (SeAction::CodeRetrieval, Some(ws)) = (&action, req.workspace.as_deref()) {
+            retrieve_code(ws, &req.task_description, &mut task_state).await
+        } else if action == SeAction::ExecuteTests {
             let result = crate::use_agent_exec::run_tests(req.workspace.as_deref(), &task_state).await;
             let output = render_exec_result(&result);
             task_state.exec_results.push(result);
