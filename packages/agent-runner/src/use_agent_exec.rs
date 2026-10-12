@@ -93,7 +93,7 @@ fn not_executed(reason: String) -> ExecResult {
     }
 }
 
-fn resolve_workspace(root: &str, workspace: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_workspace(root: &str, workspace: &str) -> Result<PathBuf, String> {
     let root = Path::new(root).canonicalize()
         .map_err(|e| format!("Tests not executed: USE_AGENT_WORKSPACE_ROOT is not usable ({e})."))?;
     let requested = Path::new(workspace);
