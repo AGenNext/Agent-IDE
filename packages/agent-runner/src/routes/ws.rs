@@ -44,7 +44,7 @@ async fn ws_run_handler(
     State(state): State<Arc<AppState>>,
     upgrade: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    upgrade.on_upgrade(move |socket| handle_run_socket(socket, run_id, state))
+    upgrade.protocols([crate::gateway::WS_AUTH_PROTOCOL]).on_upgrade(move |socket| handle_run_socket(socket, run_id, state))
 }
 
 async fn handle_run_socket(socket: WebSocket, run_id: String, state: Arc<AppState>) {
@@ -80,7 +80,7 @@ async fn ws_fabric_handler(
     State(state): State<Arc<AppState>>,
     upgrade: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    upgrade.on_upgrade(move |socket| handle_fabric_socket(socket, state))
+    upgrade.protocols([crate::gateway::WS_AUTH_PROTOCOL]).on_upgrade(move |socket| handle_fabric_socket(socket, state))
 }
 
 async fn handle_fabric_socket(socket: WebSocket, state: Arc<AppState>) {
@@ -131,7 +131,7 @@ async fn ws_unified_handler(
     State(state): State<Arc<AppState>>,
     upgrade: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    upgrade.on_upgrade(move |socket| handle_unified_socket(socket, state))
+    upgrade.protocols([crate::gateway::WS_AUTH_PROTOCOL]).on_upgrade(move |socket| handle_unified_socket(socket, state))
 }
 
 async fn handle_unified_socket(socket: WebSocket, state: Arc<AppState>) {
