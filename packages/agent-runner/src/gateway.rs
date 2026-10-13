@@ -168,25 +168,26 @@ pub async fn ingress_gate(
         return stamp_request_id(next.run(req).await);
     }
 
-    let auth = req.headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let token = auth.strip_prefix("Bearer ").unwrap_or("");
+    // The dashboard shell (HTML + chart library) carries no data, so a browser
+    // can load it and then ask for the key; every data route stays gated.
+    if req.method() == axum::http::Method::GET && is_public_asset(path) {
+        return stamp_request_id(next.run(req).await);
+    }
+
+    let token = bearer_token(&req);
+
+    if token.is_empty() {
+        // No credentials at all (e.g. the dashboard before sign-in) is not a
+        // guess, so it does not count toward the IP ban threshold.
+        return unauthorized();
+    }
 
     if !constant_time_eq(token, key) {
         let should_ban = auth_tracker.record_failure(&ip);
         if should_ban { ban_list.ban(&ip); }
         crate::hardening::audit("auth_failure", &ip, path,
             if should_ban { "IP banned after threshold" } else { "invalid bearer token" });
-        return (
-            StatusCode::UNAUTHORIZED,
-            [
-                ("www-authenticate", "Bearer realm=\"Autonomyx\""),
-                ("content-type", "application/json"),
-            ],
-            r#"{"error":"unauthorized","message":"Invalid or missing Bearer token"}"#,
-        ).into_response();
+        return unauthorized();
     }
 
     // Successful auth — clear failure record
@@ -194,6 +195,45 @@ pub async fn ingress_gate(
 
     stamp_request_id(next.run(req).await)
 }
+
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [
+            ("www-authenticate", "Bearer realm=\"Autonomyx\""),
+            ("content-type", "application/json"),
+        ],
+        r#"{"error":"unauthorized","message":"Invalid or missing Bearer token"}"#,
+    ).into_response()
+}
+
+fn is_public_asset(path: &str) -> bool {
+    matches!(path, "/" | "/echarts.min.js")
+}
+
+/// Bearer token from the Authorization header, or for WebSocket upgrades
+/// (browsers cannot set headers on them) from `Sec-WebSocket-Protocol:
+/// bearer, <token>`. The ws handlers select the `bearer` subprotocol.
+fn bearer_token(req: &Request) -> &str {
+    let header = req.headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    if let Some(t) = header {
+        return t;
+    }
+    req.headers()
+        .get("sec-websocket-protocol")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            let mut parts = v.split(',').map(str::trim);
+            parts.find(|p| *p == WS_AUTH_PROTOCOL)?;
+            parts.next()
+        })
+        .unwrap_or("")
+}
+
+pub const WS_AUTH_PROTOCOL: &str = "bearer";
 
 fn stamp_request_id(mut resp: Response) -> Response {
     let req_id = Uuid::new_v4().to_string();
@@ -296,5 +336,39 @@ impl GatewayState {
 impl Default for GatewayState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+    use axum::body::Body;
+
+    fn req(headers: &[(&str, &str)]) -> Request {
+        let mut b = axum::http::Request::builder().uri("/api/agents");
+        for (k, v) in headers { b = b.header(*k, *v); }
+        b.body(Body::empty()).unwrap()
+    }
+
+    #[test]
+    fn reads_authorization_header() {
+        assert_eq!(bearer_token(&req(&[("authorization", "Bearer abc123")])), "abc123");
+        assert_eq!(bearer_token(&req(&[("authorization", "Basic abc123")])), "");
+    }
+
+    #[test]
+    fn reads_websocket_subprotocol() {
+        assert_eq!(bearer_token(&req(&[("sec-websocket-protocol", "bearer, abc123")])), "abc123");
+        assert_eq!(bearer_token(&req(&[("sec-websocket-protocol", "chat, bearer, k")])), "k");
+        assert_eq!(bearer_token(&req(&[("sec-websocket-protocol", "abc123")])), "");
+        assert_eq!(bearer_token(&req(&[("sec-websocket-protocol", "bearer")])), "");
+    }
+
+    #[test]
+    fn only_shell_assets_are_public() {
+        assert!(is_public_asset("/"));
+        assert!(is_public_asset("/echarts.min.js"));
+        assert!(!is_public_asset("/api/agents"));
+        assert!(!is_public_asset("/ws/fabric"));
     }
 }

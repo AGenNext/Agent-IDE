@@ -92,6 +92,14 @@ pre{background:var(--bg3);border:1px solid var(--border);border-radius:8px;paddi
 .tr-arrow{color:var(--muted)}
 .tr-condition{color:var(--subtle);flex:1;font-style:italic}
 
+/* ── Sign-in ─────────────────────────────────────────────────────── */
+#signin{position:fixed;inset:0;background:rgba(5,5,10,.82);display:none;align-items:center;justify-content:center;z-index:200;padding:16px}
+#signin.open{display:flex}
+#signin .card{width:100%;max-width:380px}
+#signin-error{color:var(--red);font-size:.75rem;min-height:1em;margin:8px 0}
+.signout{font-size:.72rem;color:var(--muted);cursor:pointer;display:none}
+.signout:hover{color:var(--text)}
+
 /* ── USEagent ────────────────────────────────────────────────────── */
 #ua-chart{width:100%;height:260px;background:var(--bg3);border:1px solid var(--border);border-radius:10px}
 .ua-step{border:1px solid var(--border);border-radius:7px;background:var(--bg3);margin:4px 0}
@@ -132,6 +140,7 @@ tr:hover td{background:var(--bg3)}
   <span class="tagline">openautonomyx.com</span>
   <span id="health-dot" class="health-dot"></span>
   <span id="health-label" class="health-label">connecting…</span>
+  <span id="signout" class="signout" onclick="signOut()">Sign out</span>
 </header>
 
 <!-- ── Nav ─────────────────────────────────────────────────────────── -->
@@ -146,6 +155,18 @@ tr:hover td{background:var(--bg3)}
   <div class="tab" data-tab="metabase">Analytics</div>
   <div class="tab" data-tab="api">API Reference</div>
 </nav>
+
+<!-- ── Sign-in (shown when the runner requires an API key) ──────────── -->
+<div id="signin" role="dialog" aria-modal="true" aria-labelledby="signin-title">
+  <form class="card" onsubmit="submitKey(event)">
+    <div class="section-title" id="signin-title">Sign in</div>
+    <label for="signin-key">Runner API key</label>
+    <input id="signin-key" type="password" autocomplete="current-password" placeholder="GATEWAY_API_KEY">
+    <div id="signin-error"></div>
+    <button class="btn btn-primary" type="submit">Continue</button>
+    <div class="ua-note">Kept only in this browser tab and sent as a Bearer token.</div>
+  </form>
+</div>
 
 <main>
 
@@ -454,12 +475,65 @@ let wsConn       = null;
 let eventCounter = 0;
 
 // ── API helper ──────────────────────────────────────────────────────
+// ── Auth ────────────────────────────────────────────────────────────
+// The runner requires a Bearer key when GATEWAY_API_KEY is set. The key is
+// asked for once, kept in sessionStorage, and sent on every API call.
+const KEY_STORE = 'autonomyx.apiKey';
+let keyPrompt = null;
+
+function getKey() {
+  try { return sessionStorage.getItem(KEY_STORE) || ''; } catch(e) { return ''; }
+}
+function setKey(k) {
+  try { k ? sessionStorage.setItem(KEY_STORE, k) : sessionStorage.removeItem(KEY_STORE); } catch(e) {}
+  document.getElementById('signout').style.display = k ? 'inline' : 'none';
+}
+
+// One prompt shared by every request that hits a 401 at the same time.
+function askForKey(message) {
+  if (!keyPrompt) {
+    keyPrompt = new Promise(resolve => {
+      document.getElementById('signin-error').textContent = message || '';
+      document.getElementById('signin').classList.add('open');
+      document.getElementById('signin-key').value = '';
+      document.getElementById('signin-key').focus();
+      window._resolveKey = resolve;
+    });
+  }
+  return keyPrompt;
+}
+function submitKey(ev) {
+  ev.preventDefault();
+  const k = document.getElementById('signin-key').value.trim();
+  if (!k) return;
+  setKey(k);
+  document.getElementById('signin').classList.remove('open');
+  keyPrompt = null;
+  window._resolveKey(k);
+}
+function signOut() {
+  setKey('');
+  if (wsConn) wsConn.close();
+  location.reload();
+}
+
 async function api(path, opts={}) {
   try {
+    const key = getKey();
     const r = await fetch(BASE + path, {
-      headers: {'Content-Type':'application/json',...(opts.headers||{})},
       ...opts,
+      headers: {
+        'Content-Type':'application/json',
+        ...(key ? {'Authorization': `Bearer ${key}`} : {}),
+        ...(opts.headers||{}),
+      },
     });
+    // Ask again until the runner accepts a key; each retry waits on the user.
+    if (r.status === 401) {
+      if (key) setKey('');
+      await askForKey(key ? 'That key was not accepted.' : '');
+      return api(path, opts);
+    }
     if (!r.ok) throw new Error(r.status);
     return r.json();
   } catch(e) { return null; }
@@ -567,7 +641,11 @@ function ensureWs() {
   const statusEl = document.getElementById('ws-status');
   statusEl.innerHTML = '&#9679; connecting…';
 
-  wsConn = new WebSocket(`${WS_BASE}/ws/fabric`);
+  // Browsers cannot set headers on a WebSocket, so the key rides in the
+  // subprotocol list; the runner reads it and selects "bearer".
+  const key = getKey();
+  wsConn = key ? new WebSocket(`${WS_BASE}/ws/fabric`, ['bearer', key])
+               : new WebSocket(`${WS_BASE}/ws/fabric`);
 
   wsConn.onopen = () => {
     statusEl.innerHTML = '&#9679; live';
@@ -1213,6 +1291,7 @@ document.querySelector('[data-tab="graph"]').addEventListener('click', () => {
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────
+setKey(getKey());
 initArchGraph();
 checkHealth();
 setInterval(checkHealth, 15000);
